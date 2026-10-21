@@ -6,33 +6,59 @@
     isBlackKey,
     pitchName,
     pitchToY,
+    snapTick,
     tickToX,
     xToTick,
+    yToPitch,
     type Viewport,
   } from '../song/coords'
-  import { songLengthTicks, ticksPerBar, type Song } from '../song/song'
+  import { MIN_DURATION, addNote, noteAt, removeNotes, updateNote } from '../song/edits'
+  import { createNote, songLengthTicks, ticksPerBar, type Note, type Song } from '../song/song'
   import type { Transport } from '../song/transport'
 
   interface Props {
     song: Song
     transport: Transport
     viewport: Viewport
+    /** Snap size in ticks; 0 turns snapping off. Holding Alt also turns it off. */
+    snap: number
+    /** Called once per finished edit (e.g. on mouse up, not on every move). */
+    onEdit: (next: Song) => void
     /** Scroll horizontally to keep the playhead in view while playing. */
     follow?: boolean
   }
 
-  let { song, transport, viewport, follow = true }: Props = $props()
+  let { song, transport, viewport, snap, onEdit, follow = true }: Props = $props()
 
   const KEYS_WIDTH = 64
   const RULER_HEIGHT = 24
   /** Smallest grid division drawn, in quarter notes (1/4 = sixteenth notes). */
   const STEP_BEATS = 1 / 4
+  /** How close to a note's right end, in pixels, a drag resizes instead of moving. */
+  const RESIZE_HANDLE_PX = 6
+
+  type Drag =
+    | { mode: 'move'; base: Song; note: Note; originTick: number; originPitch: number }
+    | { mode: 'resize'; base: Song; note: Note; originTick: number }
+    | { mode: 'erase' }
+
+  // While dragging, `preview` holds the edited song and is drawn instead of
+  // `song`; it's handed to onEdit on mouse up so one drag is one undo step.
+  let drag: Drag | null = null
+  let preview = $state.raw<Song | null>(null)
+  const shown = $derived(preview ?? song)
+
+  let selectedId = $state<string | null>(null)
+  /** Length of new notes: the last note clicked or resized, like FL. */
+  let lastDuration = $state<number | null>(null)
+  let cursor = $state('crosshair')
 
   // Rows top to bottom, highest pitch first.
   const pitches = Array.from({ length: PITCH_COUNT }, (_, i) => MAX_PITCH - i)
 
   let scroller: HTMLDivElement
   let ruler: HTMLDivElement
+  let grid: HTMLDivElement
   let gridPlayhead: HTMLDivElement
   let rulerPlayhead: HTMLDivElement
 
@@ -85,7 +111,121 @@
   function onRulerMove(e: PointerEvent) {
     if (ruler.hasPointerCapture(e.pointerId)) seekFromPointer(e)
   }
+
+  // Editing. Hit-testing uses song coordinates rather than DOM targets, so it
+  // keeps working if notes are later drawn on a canvas.
+
+  function pointerInGrid(e: PointerEvent) {
+    const rect = grid.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    return { x, y, tick: xToTick(x, viewport), pitch: yToPitch(y, viewport) }
+  }
+
+  function hitTest(x: number, tick: number, pitch: number) {
+    const note = noteAt(shown, tick, pitch)
+    if (!note) return null
+    const endX = tickToX(note.start + note.duration, viewport)
+    // Short notes get a smaller handle so they can still be moved.
+    const handle = Math.min(RESIZE_HANDLE_PX, tickToX(note.duration, viewport) / 3)
+    return { note, onEdge: endX - x <= handle }
+  }
+
+  const snapFor = (e: PointerEvent) => (e.altKey ? 0 : snap)
+
+  function onGridDown(e: PointerEvent) {
+    if (e.button !== 0 && e.button !== 2) return
+    grid.setPointerCapture(e.pointerId)
+    const { x, tick, pitch } = pointerInGrid(e)
+
+    if (e.button === 2) {
+      drag = { mode: 'erase' }
+      eraseAt(x, tick, pitch)
+      return
+    }
+
+    const hit = hitTest(x, tick, pitch)
+    if (hit) {
+      selectedId = hit.note.id
+      lastDuration = hit.note.duration
+      preview = song
+      drag = hit.onEdge
+        ? { mode: 'resize', base: song, note: hit.note, originTick: tick }
+        : { mode: 'move', base: song, note: hit.note, originTick: tick, originPitch: pitch }
+      return
+    }
+
+    // Empty space: add a note, then let the same drag move it.
+    const start = snapTick(tick, snapFor(e))
+    if (start >= songLengthTicks(song)) return
+    const created = createNote({ pitch, start, duration: lastDuration ?? (snap || song.ppq) })
+    const base = addNote(song, created)
+    const note = base.notes[base.notes.length - 1]
+    selectedId = note.id
+    preview = base
+    drag = { mode: 'move', base, note, originTick: tick, originPitch: pitch }
+  }
+
+  function onGridMove(e: PointerEvent) {
+    const { x, tick, pitch } = pointerInGrid(e)
+
+    if (!drag) {
+      const hit = hitTest(x, tick, pitch)
+      cursor = hit ? (hit.onEdge ? 'ew-resize' : 'grab') : 'crosshair'
+      return
+    }
+
+    if (drag.mode === 'erase') {
+      eraseAt(x, tick, pitch)
+    } else if (drag.mode === 'move') {
+      // Snap the distance moved, not the position, so off-grid notes keep their offset.
+      const dTick = snapTick(tick - drag.originTick, snapFor(e), 'round')
+      preview = updateNote(drag.base, drag.note.id, {
+        start: drag.note.start + dTick,
+        pitch: drag.note.pitch + pitch - drag.originPitch,
+      })
+    } else {
+      const step = snapFor(e)
+      const end = snapTick(drag.note.start + drag.note.duration + tick - drag.originTick, step, 'round')
+      const maxDuration = songLengthTicks(song) - drag.note.start
+      const duration = Math.min(maxDuration, Math.max(step || MIN_DURATION, end - drag.note.start))
+      preview = updateNote(drag.base, drag.note.id, { duration })
+      lastDuration = duration
+    }
+  }
+
+  function onGridUp() {
+    if (!drag) return
+    if (preview && preview !== song) onEdit(preview)
+    drag = null
+    preview = null
+  }
+
+  function onGridCancel() {
+    drag = null
+    preview = null
+  }
+
+  function eraseAt(x: number, tick: number, pitch: number) {
+    const hit = hitTest(x, tick, pitch)
+    if (!hit) return
+    preview = removeNotes(shown, [hit.note.id])
+    if (hit.note.id === selectedId) selectedId = null
+  }
+
+  function onKeydown(e: KeyboardEvent) {
+    if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea')) return
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+      e.preventDefault()
+      onEdit(removeNotes(song, [selectedId]))
+      selectedId = null
+    } else if (e.key === 'Escape') {
+      selectedId = null
+    }
+  }
 </script>
+
+<svelte:window onkeydown={onKeydown} />
 
 <div class="scroller" bind:this={scroller}>
   <div
@@ -124,7 +264,18 @@
       {/each}
     </div>
 
-    <div class="grid">
+    <div
+      class="grid"
+      bind:this={grid}
+      role="application"
+      aria-label="Note grid"
+      style:cursor={cursor}
+      onpointerdown={onGridDown}
+      onpointermove={onGridMove}
+      onpointerup={onGridUp}
+      onpointercancel={onGridCancel}
+      oncontextmenu={(e) => e.preventDefault()}
+    >
       {#each pitches as pitch (pitch)}
         <div
           class="row"
@@ -139,15 +290,15 @@
         style:background-size="{barPx}px 100%, {beatPx}px 100%, {stepPx}px 100%"
       ></div>
 
-      {#each song.notes as note (note.id)}
+      {#each shown.notes as note (note.id)}
         <div
           class="note"
+          class:selected={note.id === selectedId}
           style:left="{tickToX(note.start, viewport)}px"
           style:top="{pitchToY(note.pitch, viewport)}px"
           style:width="{tickToX(note.duration, viewport)}px"
           style:height="{viewport.rowHeight}px"
           style:opacity={0.45 + note.velocity * 0.55}
-          title="{pitchName(note.pitch)}"
         >
           {#if tickToX(note.duration, viewport) > 28}{pitchName(note.pitch)}{/if}
         </div>
@@ -239,6 +390,8 @@
   .grid {
     position: relative;
     overflow: hidden;
+    touch-action: none;
+    user-select: none;
   }
 
   .row {
@@ -280,6 +433,12 @@
     display: flex;
     align-items: center;
     white-space: nowrap;
+    pointer-events: none;
+  }
+
+  .note.selected {
+    background: var(--note-selected);
+    border-color: var(--note-selected-border);
   }
 
   .playhead,

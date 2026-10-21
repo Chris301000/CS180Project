@@ -23,6 +23,8 @@
   --note: #8fd15f;
   --note-border: #5d9a36;
   --note-text: #1c2b12;
+  --note-selected: #f2d974;
+  --note-selected-border: #b39a2e;
   --playhead: #ff9d3b;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
