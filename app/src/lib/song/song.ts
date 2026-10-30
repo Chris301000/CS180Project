@@ -16,6 +16,20 @@ export interface Note {
   velocity: number
 }
 
+/**
+ * How a song sounds, as plain data so it can be saved and undone. Audio
+ * backends turn this into actual sound; live voices never live in the song.
+ */
+export interface SynthSettings {
+  wave: 'sine' | 'square' | 'sawtooth' | 'triangle'
+  /** Fade-in, in seconds. */
+  attack: number
+  /** Fade-out after the note ends, in seconds. */
+  release: number
+}
+
+export const DEFAULT_SYNTH: SynthSettings = { wave: 'sawtooth', attack: 0.01, release: 0.05 }
+
 export interface Song {
   bpm: number
   /** Ticks per quarter note. */
@@ -25,6 +39,7 @@ export interface Song {
   /** Song length in bars. */
   bars: number
   notes: Note[]
+  synth: SynthSettings
 }
 
 export const DEFAULT_PPQ = 96
@@ -85,5 +100,5 @@ export function createDemoSong(): Song {
     notes.push(createNote({ pitch, start, duration }))
   }
 
-  return { bpm: 120, ppq, beatsPerBar: 4, bars: 4, notes }
+  return { bpm: 120, ppq, beatsPerBar: 4, bars: 4, notes, synth: DEFAULT_SYNTH }
 }

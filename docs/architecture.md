@@ -34,23 +34,24 @@ flowchart LR
 ## Playback
 
 `Transport` owns the position. The playhead and the audio both follow it.
+Everything inside the `AudioBackend` box is hidden from the rest of the app.
 
 ```mermaid
 flowchart LR
   Play["Play / Pause / Stop / Seek"] -- "commands" --> Transport["Transport<br/>position and clock"]
   Transport -- "playhead position" --> Roll["PianoRoll"]
   Transport -- "position, play state" --> Player["AudioPlayer<br/>schedules notes"]
-  Song["SongData"] -- "notes, tempo" --> Player
-  Song -- "synth settings" --> Synth["SynthRuntime<br/>voices and nodes"]
-  Player -- "note events" --> Synth
-  Synth -- "audio" --> Renderer["AudioRenderer<br/>mixes tracks"]
-  Volume["Volume"] -- "master gain" --> Renderer
-  Renderer -- "samples" --> Output["Audio output"]
+  Song["SongData"] -- "notes, tempo, synth settings" --> Player
+  Player -- "notes with exact times" --> Backend
+  Volume["Volume"] -- "master gain" --> Backend
+  Backend -- "audio clock" --> Transport
+
+  subgraph Backend["AudioBackend: WebAudioBackend"]
+    Voices["Voices"] --> Master["Master gain"] --> Output["Audio output"]
+  end
 
   classDef built fill:#d9f2c4,stroke:#5d9a36,color:#1c2b12
-  classDef planned fill:#f3f3f3,stroke:#888,color:#222,stroke-dasharray:5 3
-  class Play,Transport,Roll,Song built
-  class Player,Synth,Renderer,Volume,Output planned
+  class Play,Transport,Roll,Song,Player,Volume,Voices,Master,Output built
 ```
 
 ## Files
@@ -63,12 +64,12 @@ flowchart LR
   Importer -- "validated song" --> History["History"]
   Files -- "export" --> Wav["WAV export"]
   Song -- "song to render" --> Wav
-  Wav -- "offline render" --> Renderer["AudioRenderer"]
+  Wav -- "offline render" --> Backend["Offline AudioBackend"]
 
   classDef built fill:#d9f2c4,stroke:#5d9a36,color:#1c2b12
   classDef planned fill:#f3f3f3,stroke:#888,color:#222,stroke-dasharray:5 3
   class Song,History built
-  class Files,Saver,Importer,Wav,Renderer planned
+  class Files,Saver,Importer,Wav,Backend planned
 ```
 
 ## Rules
@@ -76,14 +77,20 @@ flowchart LR
 - **All song changes go through `History`.** That includes note edits, tempo,
   synth settings and imports, so undo always works and nothing bypasses it.
 - **`SongData` stays plain and JSON-serializable.** It holds synth *settings*.
-  Live voices and audio nodes belong to `SynthRuntime`, which is rebuilt from
+  Live voices and audio nodes belong to the backend, which works from
   those settings.
-- **`Transport` is the only owner of playback position.** It will use
-  `AudioContext.currentTime` as its clock once audio exists.
+- **`Transport` is the only owner of playback position.** Its clock comes from
+  `AudioBackend.now()`, so the playhead and the sound share one timeline.
 - **View state is not song state.** Zoom, snap and selection are not saved with
   the song or tracked by undo.
-- **`AudioRenderer` must not depend on real-time playback,** so WAV export can
-  reuse it through `OfflineAudioContext`.
+- **The audio API is hidden behind `AudioBackend`.** The anticipated change is
+  replacing Web Audio, so nothing outside `WebAudioBackend` may use Web Audio
+  types. The interface speaks in notes and seconds, which suits both
+  schedule-ahead and pull-based APIs. Replacing the API means writing a new
+  backend and choosing it in `main.ts`. Synth sound code would be rewritten, but
+  saved songs keep working because `SynthSettings` is plain data.
+- **WAV export should be another `AudioBackend`,** so it reuses the scheduling
+  and note model instead of a separate path.
 - **Imported songs are validated first,** and their note IDs must not collide
   with IDs created afterwards.
 
@@ -95,6 +102,10 @@ flowchart LR
 | `History` | `app/src/lib/song/history.ts` |
 | `SongData` | `app/src/lib/song/song.ts`, changed through `edits.ts` |
 | `Transport` | `app/src/lib/song/transport.ts` |
+| `AudioBackend` | `app/src/lib/audio/backend.ts` |
+| Web Audio implementation | `app/src/lib/audio/webAudioBackend.ts` |
+| Silent backend for tests | `app/src/lib/audio/recordingBackend.ts` |
+| `AudioPlayer` | `app/src/lib/audio/player.ts` |
 | Toolbar controls, wiring | `app/src/App.svelte` |
 
 Selection currently lives inside `PianoRoll.svelte`, and zoom and snap in

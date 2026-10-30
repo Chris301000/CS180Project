@@ -2,11 +2,12 @@ import { render } from '@testing-library/svelte'
 import { tick } from 'svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.svelte'
+import { RecordingBackend } from './lib/audio/recordingBackend'
 
 const key = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent('keydown', init))
 
 function setup() {
-  const { container, getByLabelText } = render(App)
+  const { container, getByLabelText } = render(App, { backend: new RecordingBackend() })
   const grid = container.querySelector('.grid')!
   const notes = () => container.querySelectorAll('.note').length
   // Top row of the grid, where the demo song has no notes.

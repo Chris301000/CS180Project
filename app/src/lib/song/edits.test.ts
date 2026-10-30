@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { addNote, clampNote, noteAt, removeNotes, updateNote } from './edits'
 import { History } from './history'
-import { createNote, songLengthTicks, type Song } from './song'
+import { DEFAULT_SYNTH, createNote, songLengthTicks, type Song } from './song'
 
 function emptySong(): Song {
-  return { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2, notes: [] }
+  return { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2, notes: [], synth: DEFAULT_SYNTH }
 }
 
 describe('edits', () => {

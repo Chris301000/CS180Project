@@ -1,7 +1,7 @@
 import { render } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PianoRoll from './PianoRoll.svelte'
-import { createNote, type Note, type Song } from '../song/song'
+import { DEFAULT_SYNTH, createNote, type Note, type Song } from '../song/song'
 import { Transport } from '../song/transport'
 
 // jsdom has no layout, so the grid sits at (0, 0) and clientX/Y are grid
@@ -17,7 +17,7 @@ function pointer(el: Element, type: string, x: number, y: number, options: Point
 }
 
 function setup(notes: Note[] = []) {
-  const song: Song = { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2, notes }
+  const song: Song = { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2, notes, synth: DEFAULT_SYNTH }
   const onEdit = vi.fn<(next: Song) => void>()
   const { container } = render(PianoRoll, {
     song,

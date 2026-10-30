@@ -1,9 +1,13 @@
 <script lang="ts">
   import PianoRoll from './lib/pianoroll/PianoRoll.svelte'
+  import type { AudioBackend } from './lib/audio/backend'
+  import { AudioPlayer } from './lib/audio/player'
   import { createDemoSong, formatPosition, type Song } from './lib/song/song'
   import { Transport } from './lib/song/transport'
   import { History } from './lib/song/history'
   import type { Viewport } from './lib/song/coords'
+
+  let { backend }: { backend: AudioBackend } = $props()
 
   const SNAP_OPTIONS = [
     { label: 'Beat', beats: 1 },
@@ -21,7 +25,7 @@
   let song = $state.raw(history.current)
   let canUndo = $state(false)
   let canRedo = $state(false)
-  const transport = new Transport(() => song)
+  const transport = new Transport(() => song, () => backend.now())
 
   let snapBeats = $state(1 / 4)
   const snap = $derived(Math.round(song.ppq * snapBeats))
@@ -51,6 +55,7 @@
   let loop = $state(transport.loop)
   let follow = $state(true)
   let zoom = $state(0.6)
+  let volume = $state(0.8)
   let positionText = $state('1:1:00')
 
   const viewport: Viewport = $derived({ pxPerTick: zoom, rowHeight: 16 })
@@ -58,6 +63,11 @@
   $effect(() => transport.subscribe(() => (playing = transport.isPlaying)))
   $effect(() => {
     transport.loop = loop
+  })
+  $effect(() => backend.setMasterGain(volume))
+  $effect(() => {
+    const player = new AudioPlayer(() => song, transport, backend)
+    return () => player.dispose()
   })
 
   $effect(() => {
@@ -70,12 +80,18 @@
     return () => cancelAnimationFrame(raf)
   })
 
+  function togglePlay() {
+    // Browsers only allow audio to begin from a user gesture, and this is one.
+    backend.start()
+    transport.toggle()
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea')) return
     const mod = e.metaKey || e.ctrlKey
     if (e.code === 'Space') {
       e.preventDefault()
-      transport.toggle()
+      togglePlay()
     } else if (mod && e.key.toLowerCase() === 'z') {
       e.preventDefault()
       if (e.shiftKey) redo()
@@ -91,7 +107,7 @@
 
 <div class="app">
   <header class="toolbar">
-    <button class="play" onclick={() => transport.toggle()} aria-label={playing ? 'Pause' : 'Play'}>
+    <button class="play" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
       {playing ? '❚❚' : '▶'}
     </button>
     <button onclick={() => transport.stop()} aria-label="Stop">■</button>
@@ -111,6 +127,10 @@
 
     <label><input type="checkbox" bind:checked={loop} /> Loop</label>
     <label><input type="checkbox" bind:checked={follow} /> Follow</label>
+    <label>
+      Volume
+      <input type="range" min="0" max="1" step="0.01" bind:value={volume} />
+    </label>
     <label class="zoom">
       Zoom
       <input type="range" min="0.15" max="2" step="0.05" bind:value={zoom} />
