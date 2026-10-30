@@ -41,6 +41,18 @@ describe('edits', () => {
     expect(next.notes).toEqual([b])
   })
 
+  it('returns the same song when an update changes nothing', () => {
+    const a = createNote({ pitch: 60, start: 0, duration: 96 })
+    const song = { ...emptySong(), notes: [a] }
+    expect(updateNote(song, a.id, { start: 0, pitch: 60 })).toBe(song)
+    expect(updateNote(song, 'missing', { start: 48 })).toBe(song)
+  })
+
+  it('returns the same song when removing notes that are not there', () => {
+    const song = { ...emptySong(), notes: [createNote({ pitch: 60, start: 0, duration: 96 })] }
+    expect(removeNotes(song, ['missing'])).toBe(song)
+  })
+
   it('finds the topmost note at a tick and pitch, with an exclusive end', () => {
     const a = createNote({ pitch: 60, start: 0, duration: 96 })
     const b = createNote({ pitch: 60, start: 48, duration: 96 })

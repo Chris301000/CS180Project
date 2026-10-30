@@ -115,6 +115,51 @@ describe('Transport', () => {
     expect(transport.isPlaying).toBe(false)
   })
 
+  it('ignores play while already playing, without losing its place', () => {
+    const { song, transport, advance } = setup()
+    transport.play()
+    advance(0.5)
+    transport.play()
+    advance(0.5)
+    expect(transport.position()).toBe(song.ppq * 2)
+  })
+
+  it('resumes from where it paused', () => {
+    const { song, transport, advance } = setup()
+    transport.play()
+    advance(0.5)
+    transport.pause()
+    advance(5)
+    transport.play()
+    advance(0.5)
+    expect(transport.position()).toBe(song.ppq * 2)
+  })
+
+  it('seeks while paused and stays there', () => {
+    const { song, transport, advance } = setup()
+    transport.seek(song.ppq)
+    advance(5)
+    expect(transport.position()).toBe(song.ppq)
+    expect(transport.isPlaying).toBe(false)
+  })
+
+  it('clamps seeks to the song', () => {
+    const { song, transport } = setup()
+    transport.seek(-10)
+    expect(transport.position()).toBe(0)
+    transport.seek(1e9)
+    expect(transport.position()).toBe(songLengthTicks(song))
+  })
+
+  it('keeps position across several loops and a pause', () => {
+    const { song, transport, advance } = setup()
+    const songSeconds = ticksToSeconds(songLengthTicks(song), song)
+    transport.play()
+    advance(songSeconds * 3 + 0.5)
+    transport.pause()
+    expect(transport.position()).toBeCloseTo(song.ppq)
+  })
+
   it('notifies listeners on state changes', () => {
     const { transport } = setup()
     let calls = 0

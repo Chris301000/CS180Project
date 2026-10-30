@@ -1,6 +1,7 @@
 // Every change to a song goes through these functions. Each returns a new
 // Song and leaves the old one untouched, which is what makes undo a matter of
-// keeping the old songs around (see history.ts).
+// keeping the old songs around (see history.ts). An edit that changes nothing
+// returns the same song, so it never becomes an empty undo step.
 
 import { clampPitch } from './coords'
 import { songLengthTicks, type Note, type Song } from './song'
@@ -21,14 +22,17 @@ export function addNote(song: Song, note: Note): Song {
 
 export function removeNotes(song: Song, ids: Iterable<string>): Song {
   const remove = new Set(ids)
-  return { ...song, notes: song.notes.filter((n) => !remove.has(n.id)) }
+  const notes = song.notes.filter((n) => !remove.has(n.id))
+  return notes.length === song.notes.length ? song : { ...song, notes }
 }
 
 export function updateNote(song: Song, id: string, changes: Partial<Omit<Note, 'id'>>): Song {
-  return {
-    ...song,
-    notes: song.notes.map((n) => (n.id === id ? clampNote({ ...n, ...changes }, song) : n)),
-  }
+  const current = song.notes.find((n) => n.id === id)
+  if (!current) return song
+  const next = clampNote({ ...current, ...changes }, song)
+  const changed = (Object.keys(next) as (keyof Note)[]).some((key) => next[key] !== current[key])
+  if (!changed) return song
+  return { ...song, notes: song.notes.map((n) => (n === current ? next : n)) }
 }
 
 /** The note covering `tick` on row `pitch`. Later notes are drawn on top, so they win. */
