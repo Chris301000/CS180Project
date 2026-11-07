@@ -6,6 +6,7 @@
   import { Transport } from './lib/song/transport'
   import { History } from './lib/song/history'
   import type { Viewport } from './lib/song/coords'
+  import { parseSong, serializeSong, SongFileError, SONG_FILE_EXTENSION } from './lib/song/songFile'
 
   let { backend }: { backend: AudioBackend } = $props()
 
@@ -49,6 +50,39 @@
   function redo() {
     history.redo()
     syncHistory()
+  }
+
+  let fileInput: HTMLInputElement
+  let fileError = $state('')
+
+  function saveSong() {
+    const blob = new Blob([serializeSong(song)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `song${SONG_FILE_EXTENSION}`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function openSong(file: File) {
+    try {
+      const loaded = parseSong(await file.text())
+      // The old position may be past the end of the new song.
+      transport.stop()
+      edit(loaded)
+      fileError = ''
+    } catch (err) {
+      fileError = err instanceof SongFileError ? err.message : 'Could not read that file.'
+    }
+  }
+
+  function onFileChosen(e: Event) {
+    const input = e.currentTarget as HTMLInputElement
+    const file = input.files?.[0]
+    // Clear it so choosing the same file again still fires a change.
+    input.value = ''
+    if (file) openSong(file)
   }
 
   let playing = $state(transport.isPlaying)
@@ -99,6 +133,12 @@
     } else if (mod && e.key.toLowerCase() === 'y') {
       e.preventDefault()
       redo()
+    } else if (mod && e.key.toLowerCase() === 's') {
+      e.preventDefault()
+      saveSong()
+    } else if (mod && e.key.toLowerCase() === 'o') {
+      e.preventDefault()
+      fileInput.click()
     }
   }
 </script>
@@ -107,6 +147,17 @@
 
 <div class="app">
   <header class="toolbar">
+    <button class="file" onclick={() => fileInput.click()} title="Open a song file (Ctrl/Cmd+O)">Open</button>
+    <button class="file" onclick={saveSong} title="Save the song to a file (Ctrl/Cmd+S)">Save</button>
+    <input
+      bind:this={fileInput}
+      type="file"
+      accept="{SONG_FILE_EXTENSION},.json,application/json"
+      onchange={onFileChosen}
+      hidden
+      data-testid="song-file-input"
+    />
+
     <button class="play" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
       {playing ? '❚❚' : '▶'}
     </button>
@@ -135,6 +186,12 @@
       Zoom
       <input type="range" min="0.15" max="2" step="0.05" bind:value={zoom} />
     </label>
+    {#if fileError}
+      <span class="error" role="alert">
+        {fileError}
+        <button class="dismiss" onclick={() => (fileError = '')} aria-label="Dismiss">✕</button>
+      </span>
+    {/if}
   </header>
 
   <main class="roll">
@@ -189,6 +246,23 @@
 
   .play {
     color: var(--accent);
+  }
+
+  .file {
+    width: auto;
+    padding: 0 10px;
+  }
+
+  .error {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #ff7a7a;
+  }
+
+  .dismiss {
+    width: 22px;
+    height: 22px;
   }
 
   .position {

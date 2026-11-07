@@ -27,8 +27,8 @@ flowchart LR
 
   classDef built fill:#d9f2c4,stroke:#5d9a36,color:#1c2b12
   classDef planned fill:#f3f3f3,stroke:#888,color:#222,stroke-dasharray:5 3
-  class Roll,UndoRedo,View,History,Song,ViewState built
-  class Instruments,Tempo,Importer planned
+  class Roll,UndoRedo,View,History,Song,ViewState,Importer built
+  class Instruments,Tempo planned
 ```
 
 ## Playback
@@ -68,8 +68,8 @@ flowchart LR
 
   classDef built fill:#d9f2c4,stroke:#5d9a36,color:#1c2b12
   classDef planned fill:#f3f3f3,stroke:#888,color:#222,stroke-dasharray:5 3
-  class Song,History built
-  class Files,Saver,Importer,Wav,Backend planned
+  class Files,Song,History,Saver,Importer built
+  class Wav,Backend planned
 ```
 
 ## Rules
@@ -92,7 +92,10 @@ flowchart LR
 - **WAV export should be another `AudioBackend`,** so it reuses the scheduling
   and note model instead of a separate path.
 - **Imported songs are validated first,** and their note IDs must not collide
-  with IDs created afterwards.
+  with IDs created afterwards. Song files don't store note IDs at all; notes
+  get fresh ones when a file is opened.
+- **Song files carry a `format` and `version`.** Bump `SONG_FILE_VERSION` when
+  the saved shape changes, and keep `parseSong` able to read older versions.
 
 ## Where it lives in the code
 
@@ -106,7 +109,8 @@ flowchart LR
 | Web Audio implementation | `app/src/lib/audio/webAudioBackend.ts` |
 | Silent backend for tests | `app/src/lib/audio/recordingBackend.ts` |
 | `AudioPlayer` | `app/src/lib/audio/player.ts` |
-| Toolbar controls, wiring | `app/src/App.svelte` |
+| `Saver`, `Importer` (file format, validation) | `app/src/lib/song/songFile.ts` |
+| Toolbar controls, wiring, Save / Open buttons | `app/src/App.svelte` |
 
 Selection currently lives inside `PianoRoll.svelte`, and zoom and snap in
 `App.svelte`. There is no separate view-state module yet.
