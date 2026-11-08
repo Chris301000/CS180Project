@@ -123,6 +123,16 @@ export function createInstrument<K extends BuiltinType>(type: K): InstrumentOf<K
  * The approved WAM plugins: the only ones the app will load. Each runs its
  * own code inside the app, so a song file naming any other URL keeps it but
  * doesn't load it.
+ *
+ * They load from their own sites, so using one needs the internet, and the
+ * code that runs is whatever that site serves at the time (it can change).
+ * Before adding one, read through what it loads and does.
+ *
+ * Synth-101 (reviewed 2026-11-07): a webpack development build containing
+ * Preact (MIT), the WAM SDK and the plugin's own code. It loads index.js,
+ * descriptor.json, EnvelopeGeneratorProcessor.js and SlewProcessor.js from its
+ * folder and nothing from anywhere else; draws its interface in a shadow DOM;
+ * uses no storage or cookies. Its licence isn't stated in its files.
  */
 export const WAM_PLUGINS: readonly { name: string; url: string }[] = [
   { name: 'Synth-101', url: 'https://www.webaudiomodules.com/community/plugins/burns-audio/synth101/index.js' },

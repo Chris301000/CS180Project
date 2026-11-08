@@ -50,6 +50,13 @@ function fakeAudio(initialStatus: PluginStatus = 'ready') {
 
 const instrument = (state: unknown = null): WamPlugin => ({ ...createWamInstrument(WAM_PLUGINS[0]), state })
 
+const pointer = (el: EventTarget, type: string) => el.dispatchEvent(new MouseEvent(type, { bubbles: true }))
+/** A click on something inside the plugin's interface: press and release there. */
+const press = (el: Element) => {
+  pointer(el, 'pointerdown')
+  pointer(el, 'pointerup')
+}
+
 function setup(fake = fakeAudio(), state: unknown = { cutoff: 0.2 }) {
   const onChange = vi.fn<(next: WamPlugin) => void>()
   const result = render(WamEditor, {
@@ -109,12 +116,33 @@ describe('WamEditor', () => {
     await flush()
     plugin.state = { cutoff: 0.8 } // Turned a knob in the plugin's own interface.
     const knob = container.querySelector('.fake-gui button')!
-    knob.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
-    knob.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    press(knob)
+    press(knob)
     expect(onChange).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(300)
     expect(onChange).toHaveBeenCalledOnce()
     expect(onChange).toHaveBeenCalledWith(instrument({ cutoff: 0.8 }))
+  })
+
+  it('records a knob dragged from inside the plugin and let go outside it', async () => {
+    const { container, start, plugin, onChange } = setup()
+    await start()
+    await flush()
+    pointer(container.querySelector('.fake-gui button')!, 'pointerdown')
+    plugin.state = { cutoff: 0.9 }
+    pointer(document.body, 'pointerup')
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChange).toHaveBeenCalledWith(instrument({ cutoff: 0.9 }))
+  })
+
+  it('ignores releases that did not start inside the plugin', async () => {
+    const { start, plugin, onChange } = setup()
+    await start()
+    await flush()
+    plugin.state = { cutoff: 0.9 }
+    press(document.body)
+    await vi.advanceTimersByTimeAsync(300)
+    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('records nothing when an interaction changed nothing (allowing for rounding)', async () => {
@@ -122,7 +150,7 @@ describe('WamEditor', () => {
     await start()
     await flush()
     plugin.state = { cutoff: 0.20000000298023224 }
-    container.querySelector('.fake-gui button')!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }))
+    press(container.querySelector('.fake-gui button')!)
     await vi.advanceTimersByTimeAsync(300)
     expect(onChange).not.toHaveBeenCalled()
   })

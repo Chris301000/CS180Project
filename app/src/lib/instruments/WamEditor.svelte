@@ -96,6 +96,18 @@
   }
 
   let settleTimer: ReturnType<typeof setTimeout> | undefined
+  /**
+   * Set when a press starts inside the plugin. Its knobs keep following the
+   * mouse when it leaves them and finish on release anywhere, so the release
+   * is watched on the whole window, not only inside the plugin.
+   */
+  let pressedInside = false
+
+  function onWindowPointerUp() {
+    if (!pressedInside) return
+    pressedInside = false
+    onInteraction()
+  }
 
   function onInteraction() {
     clearTimeout(settleTimer)
@@ -111,6 +123,8 @@
 
   $effect(() => () => clearTimeout(settleTimer))
 </script>
+
+<svelte:window onpointerup={onWindowPointerUp} onpointercancel={onWindowPointerUp} />
 
 <div class="wam">
   {#if status === 'stopped'}
@@ -135,7 +149,7 @@
     aria-label="{instrument.name} controls"
     bind:this={guiHost}
     hidden={status !== 'ready'}
-    onpointerup={onInteraction}
+    onpointerdown={() => (pressedInside = true)}
     onkeyup={onInteraction}
     onchange={onInteraction}
     onwheel={onInteraction}
