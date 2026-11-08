@@ -5,7 +5,6 @@ import { pitchToFrequency } from './backend'
 import { removeClips } from '../song/clips'
 import { removeNotes, replacePattern } from '../song/edits'
 import {
-  DEFAULT_SYNTH,
   createClip,
   createNote,
   createPattern,
@@ -13,8 +12,8 @@ import {
   songFromNotes,
   type Note,
   type Song,
-  type SynthSettings,
 } from '../song/song'
+import { createInstrument, DEFAULT_INSTRUMENT } from '../instruments/definitions'
 import { Transport } from '../song/transport'
 
 // 120 BPM at 96 ppq: one beat is 96 ticks or 0.5s. The song is 1 bar, 2 seconds.
@@ -87,17 +86,18 @@ describe('notesStartingIn', () => {
     expect(notes.map((n) => [n.start, n.duration])).toEqual([[0, 48], [96, 24]])
   })
 
-  it("plays each note with its own track's synth", () => {
-    const bass: SynthSettings = { wave: 'square', attack: 0, release: 0 }
-    const pattern = createPattern('P', 384, [note(0)])
-    const tracks = [createTrack('Lead'), createTrack('Bass', bass)]
+  it("plays each note with its own pattern's instrument, whatever track it's on", () => {
+    const fm = createInstrument('fm')
+    const lead = createPattern('Lead', 384, [note(0)])
+    const bells = createPattern('Bells', 384, [note(0)], fm)
+    const track = createTrack('T')
     const song: Song = {
       ...TIMING,
-      tracks,
-      patterns: [pattern],
-      clips: [createClip(pattern, tracks[0], 0), createClip(pattern, tracks[1], 0)],
+      tracks: [track],
+      patterns: [lead, bells],
+      clips: [createClip(lead, track, 0), createClip(bells, track, 0)],
     }
-    expect(notesStartingIn(song, 0, 384).map((n) => n.synth)).toEqual([DEFAULT_SYNTH, bass])
+    expect(notesStartingIn(song, 0, 384).map((n) => n.instrument)).toEqual([DEFAULT_INSTRUMENT, fm])
   })
 })
 
@@ -126,10 +126,17 @@ describe('AudioPlayer', () => {
     expect(backend.now()).toBeLessThan(10.5)
   })
 
-  it('sends the note details and track synth to the backend', () => {
+  it('sends the note details and its instrument to the backend', () => {
     const { backend, transport } = setup([createNote({ pitch: 72, start: 0, duration: 96, velocity: 0.5 })])
     transport.play()
-    expect(backend.notes[0]).toMatchObject({ pitch: 72, duration: 0.5, velocity: 0.5, synth: DEFAULT_SYNTH })
+    expect(backend.notes[0]).toMatchObject({ pitch: 72, duration: 0.5, velocity: 0.5, instrument: DEFAULT_INSTRUMENT })
+  })
+
+  it("sends each note's pattern volume to the backend", () => {
+    const { state, backend, transport } = setup([note(0)])
+    state.song = replacePattern(state.song, { ...state.song.patterns[0], volume: 0.4 })
+    transport.play()
+    expect(backend.notes[0].volume).toBe(0.4)
   })
 
   it('plays each note once across many passes', () => {

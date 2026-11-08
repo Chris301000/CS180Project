@@ -1,8 +1,11 @@
 // Song data model. Plain TypeScript with no Svelte imports, so the piano roll
 // and the audio player can both depend on it.
 //
-// A song has tracks (rows, each with its instrument), patterns (blocks of
-// notes) and clips (a pattern placed on a track at some time, maybe trimmed).
+// A song has patterns (blocks of notes, each played by its own instrument),
+// tracks (rows in the playlist) and clips (a pattern placed on a track at some
+// time, maybe trimmed).
+
+import { DEFAULT_INSTRUMENT, type Instrument } from '../instruments/definitions'
 //
 // All times are in ticks. Pixels depend on zoom and seconds depend on tempo;
 // ticks depend on neither, so the song stays valid when either changes.
@@ -20,29 +23,18 @@ export interface Note {
 }
 
 /**
- * How a song sounds, as plain data so it can be saved and undone. Audio
- * backends turn this into actual sound; live voices never live in the song.
+ * A row in the playlist. It only holds clips; the sound comes from each clip's
+ * pattern, so one track can mix patterns played by different instruments.
  */
-export interface SynthSettings {
-  wave: 'sine' | 'square' | 'sawtooth' | 'triangle'
-  /** Fade-in, in seconds. */
-  attack: number
-  /** Fade-out after the note ends, in seconds. */
-  release: number
-}
-
-export const DEFAULT_SYNTH: SynthSettings = { wave: 'sawtooth', attack: 0.01, release: 0.05 }
-
-/** A row in the track list, and the instrument that plays every clip on it. */
 export interface Track {
   id: string
   name: string
-  synth: SynthSettings
 }
 
 /**
  * A reusable block of notes, like a prefab: every clip that uses it plays the
- * same notes, so editing the pattern changes all of them.
+ * same notes, so editing the pattern changes all of them. A pattern belongs
+ * to one instrument, which plays all its notes.
  */
 export interface Pattern {
   id: string
@@ -51,6 +43,12 @@ export interface Pattern {
   length: number
   /** Note starts are measured from the start of the pattern, not the song. */
   notes: Note[]
+  instrument: Instrument
+  /**
+   * 0–1, the position of the volume slider. Kept outside the instrument so
+   * swapping synths keeps it, like a channel's volume in FL.
+   */
+  volume: number
 }
 
 /**
@@ -61,7 +59,7 @@ export interface Pattern {
 export interface Clip {
   id: string
   patternId: string
-  /** The row it sits on, which decides the instrument. */
+  /** The row it sits on. */
   trackId: string
   /** Where the clip begins in the song, in ticks. */
   start: number
@@ -128,17 +126,21 @@ export function createNote(fields: Omit<Note, 'id' | 'velocity'> & { velocity?: 
   return { id: newId('n'), velocity: 0.8, ...fields }
 }
 
-export const createTrack = (name: string, synth: SynthSettings = DEFAULT_SYNTH): Track => ({
-  id: newId('t'),
-  name,
-  synth,
-})
+export const createTrack = (name: string): Track => ({ id: newId('t'), name })
 
-export const createPattern = (name: string, length: number, notes: Note[] = []): Pattern => ({
+export const createPattern = (
+  name: string,
+  length: number,
+  notes: Note[] = [],
+  instrument: Instrument = DEFAULT_INSTRUMENT,
+  volume = 1,
+): Pattern => ({
   id: newId('p'),
   name,
   length,
   notes,
+  instrument,
+  volume,
 })
 
 /** A clip that plays the whole pattern, untrimmed. */
@@ -157,9 +159,9 @@ export type SongTiming = Pick<Song, 'bpm' | 'ppq' | 'beatsPerBar' | 'bars'>
  * A song with one track playing one pattern from start to end. This is what
  * a song looked like before tracks existed, so old song files load as one.
  */
-export function songFromNotes(timing: SongTiming, notes: Note[], synth: SynthSettings = DEFAULT_SYNTH): Song {
-  const track = createTrack('Track 1', synth)
-  const pattern = createPattern('Pattern 1', songLengthTicks(timing), notes)
+export function songFromNotes(timing: SongTiming, notes: Note[], instrument: Instrument = DEFAULT_INSTRUMENT): Song {
+  const track = createTrack('Track 1')
+  const pattern = createPattern('Pattern 1', songLengthTicks(timing), notes, instrument)
   return { ...timing, tracks: [track], patterns: [pattern], clips: [createClip(pattern, track, 0)] }
 }
 

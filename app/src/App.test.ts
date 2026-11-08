@@ -128,6 +128,71 @@ describe('track list and piano roll', () => {
   })
 })
 
+describe('instrument window', () => {
+  async function openInstrument() {
+    const result = setup()
+    result.getByText('Instrument', { selector: 'button' }).click()
+    await tick()
+    const panel = result.container.querySelector('section[aria-label^="Instrument"]')!
+    return { ...result, panel }
+  }
+
+  it("shows the selected pattern's instrument", async () => {
+    const { panel } = await openInstrument()
+    expect(panel.getAttribute('aria-label')).toBe('Instrument – Chords')
+    expect(panel.querySelector('select')!.value).toBe('basic')
+  })
+
+  it('swaps the synth, and undo swaps it back', async () => {
+    const { panel, getByLabelText } = await openInstrument()
+    await fireEvent.change(panel.querySelector('select')!, { target: { value: 'fm' } })
+    expect(panel.querySelector('select')!.value).toBe('fm')
+    expect(getByLabelText('Ratio')).toBeTruthy()
+    ;(getByLabelText('Undo') as HTMLButtonElement).click()
+    await tick()
+    expect(panel.querySelector('select')!.value).toBe('basic')
+  })
+
+  it('records a whole volume slide as one undo step, and keeps the volume when swapping synths', async () => {
+    const { panel, getByLabelText } = await openInstrument()
+    const slider = panel.querySelector<HTMLInputElement>('.volume input')!
+    for (const value of ['0.9', '0.7', '0.5']) await fireEvent.input(slider, { target: { value } })
+    expect(getByLabelText('Undo')).toHaveProperty('disabled', true)
+    await fireEvent.change(slider, { target: { value: '0.5' } })
+    expect(getByLabelText('Undo')).toHaveProperty('disabled', false)
+
+    await fireEvent.change(panel.querySelector('select')!, { target: { value: 'fm' } })
+    expect(slider.value).toBe('0.5')
+
+    const undo = getByLabelText('Undo') as HTMLButtonElement
+    undo.click()
+    undo.click()
+    await tick()
+    expect(slider.value).toBe('1')
+    expect(undo.disabled).toBe(true)
+  })
+
+  it('records a whole knob turn as one undo step', async () => {
+    const { getByLabelText } = await openInstrument()
+    const release = getByLabelText('Release')
+    const turn = (type: string, y: number) =>
+      release.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientY: y }))
+    turn('pointerdown', 200)
+    turn('pointermove', 180)
+    turn('pointermove', 150)
+    await tick()
+    expect(getByLabelText('Undo')).toHaveProperty('disabled', true)
+    turn('pointerup', 150)
+    await tick()
+    const turned = release.getAttribute('aria-valuenow')
+    expect(Number(turned)).toBeGreaterThan(0.05)
+    ;(getByLabelText('Undo') as HTMLButtonElement).click()
+    await tick()
+    expect(release.getAttribute('aria-valuenow')).toBe('0.05')
+    expect(getByLabelText('Undo')).toHaveProperty('disabled', true)
+  })
+})
+
 describe('opening song files', () => {
   it('replaces the song, and undo brings the old one back', async () => {
     const { notes, openFile, getByLabelText } = setup()

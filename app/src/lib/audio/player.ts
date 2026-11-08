@@ -6,8 +6,8 @@ import {
   playLengthTicks,
   ticksToSeconds,
   type Song,
-  type SynthSettings,
 } from '../song/song'
+import type { Instrument } from '../instruments/definitions'
 import type { Transport } from '../song/transport'
 
 /** How far ahead notes are queued, in seconds. */
@@ -15,14 +15,16 @@ const LOOKAHEAD = 0.1
 /** How often the queue is topped up, in milliseconds. */
 const INTERVAL = 25
 
-/** A note as it plays in the song: in song time, cut to its clip, with its track's synth. */
+/** A note as it plays in the song: in song time, cut to its clip, with its pattern's instrument. */
 export interface SongNote {
   pitch: number
   /** In ticks from the start of the song. */
   start: number
   duration: number
   velocity: number
-  synth: SynthSettings
+  /** The pattern's volume slider, 0–1. */
+  volume: number
+  instrument: Instrument
 }
 
 /**
@@ -37,8 +39,7 @@ export function notesStartingIn(song: Song, from: number, to: number): SongNote[
     // Skip clips that don't overlap the range at all.
     if (clip.start >= to || clip.start + clip.length <= from) continue
     const pattern = findPattern(song, clip.patternId)
-    const track = findTrack(song, clip.trackId)
-    if (!pattern || !track) continue
+    if (!pattern || !findTrack(song, clip.trackId)) continue
     const clipEnd = clip.offset + clip.length // in pattern ticks
     for (const note of pattern.notes) {
       if (note.start < clip.offset || note.start >= clipEnd) continue
@@ -49,7 +50,8 @@ export function notesStartingIn(song: Song, from: number, to: number): SongNote[
         start,
         duration: Math.min(note.duration, clipEnd - note.start),
         velocity: note.velocity,
-        synth: track.synth,
+        volume: pattern.volume,
+        instrument: pattern.instrument,
       })
     }
   }
@@ -106,7 +108,8 @@ export class AudioPlayer {
           time: this.cursorTime + ticksToSeconds(note.start - this.cursorTick, song),
           duration: ticksToSeconds(note.duration, song),
           velocity: note.velocity,
-          synth: note.synth,
+          volume: note.volume,
+          instrument: note.instrument,
         })
       }
       this.cursorTime += ticksToSeconds(stop - this.cursorTick, song)

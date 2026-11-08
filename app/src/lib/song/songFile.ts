@@ -2,16 +2,20 @@
 // and turning that text back into a Song. Plain TypeScript with no DOM, so it
 // is easy to test; App.svelte does the actual downloading and file picking.
 //
-// A version 2 file looks like:
-//   { "format": "lite-daw-song", "version": 2, "song": {
+// A version 3 file looks like:
+//   { "format": "lite-daw-song", "version": 3, "song": {
 //       bpm, ppq, beatsPerBar, bars,
-//       tracks:   [{ name, synth }],
-//       patterns: [{ name, length, notes: [{ pitch, start, duration, velocity }] }],
+//       tracks:   [{ name }],
+//       patterns: [{ name, length, volume, instrument: { type, ...settings },
+//                    notes: [{ pitch, start, duration, velocity }] }],
 //       clips:    [{ pattern, track, start, offset, length }] } }
 // where a clip's `pattern` and `track` are positions in those lists.
 //
-// Version 1 files (from before tracks existed) have `synth` and `notes` on the
-// song instead, and load as one track playing one pattern.
+// Older versions still open:
+//   - Version 2 put the synth on each track instead of each pattern. A pattern
+//     gets the synth of the track its first clip is on.
+//   - Version 1 (from before tracks existed) has `synth` and `notes` on the
+//     song, and loads as one track playing one pattern.
 //
 // IDs are not saved. They only matter inside one session, and giving loaded
 // notes, tracks, patterns and clips fresh IDs means they can never collide
@@ -24,7 +28,6 @@ import {
   createNote,
   createPattern,
   createTrack,
-  DEFAULT_SYNTH,
   newId,
   songFromNotes,
   type Clip,
@@ -32,12 +35,18 @@ import {
   type Pattern,
   type Song,
   type SongTiming,
-  type SynthSettings,
-  type Track,
 } from './song'
+import {
+  DEFAULT_INSTRUMENT,
+  INSTRUMENTS,
+  type ChoiceParam,
+  type Instrument,
+  type InstrumentType,
+  type NumberParam,
+} from '../instruments/definitions'
 
 export const SONG_FILE_FORMAT = 'lite-daw-song'
-export const SONG_FILE_VERSION = 2
+export const SONG_FILE_VERSION = 3
 export const SONG_FILE_EXTENSION = '.litedaw.json'
 
 /** Thrown when a file can't be read as a song. The message is safe to show the user. */
@@ -56,10 +65,12 @@ export function serializeSong(song: Song): string {
       ppq: song.ppq,
       beatsPerBar: song.beatsPerBar,
       bars: song.bars,
-      tracks: song.tracks.map((t) => ({ name: t.name, synth: { ...t.synth } })),
+      tracks: song.tracks.map((t) => ({ name: t.name })),
       patterns: song.patterns.map((p) => ({
         name: p.name,
         length: p.length,
+        volume: p.volume,
+        instrument: { ...p.instrument },
         notes: p.notes.map(({ pitch, start, duration, velocity }) => ({ pitch, start, duration, velocity })),
       })),
       clips: song.clips.map((c) => ({
@@ -103,37 +114,56 @@ export function parseSong(text: string): Song {
     bars: number(raw.bars, 'bars', { min: 1, max: 9999, integer: true }),
   }
 
-  return data.version === 1 ? parseVersion1(raw, timing) : parseVersion2(raw, timing)
+  return data.version === 1 ? parseVersion1(raw, timing) : parseTracksAndPatterns(raw, timing, data.version)
 }
 
 function parseVersion1(raw: Record<string, unknown>, timing: SongTiming): Song {
-  const synth = raw.synth === undefined ? DEFAULT_SYNTH : parseSynth(raw.synth, 'The synth settings')
-  const song = songFromNotes(timing, [], synth)
+  const instrument = raw.synth === undefined ? DEFAULT_INSTRUMENT : parseInstrument(raw.synth, 'The synth settings')
+  const song = songFromNotes(timing, [], instrument)
   const pattern = song.patterns[0]
   const notes = list(raw.notes, "The song's notes").map((n, i) => clampNote(parseNote(n, `note ${i + 1}`), pattern))
   return { ...song, patterns: [{ ...pattern, notes }] }
 }
 
-function parseVersion2(raw: Record<string, unknown>, timing: SongTiming): Song {
-  const tracks: Track[] = list(raw.tracks, "The song's tracks").map((t, i) => {
-    const label = `track ${i + 1}`
-    if (!isObject(t)) throw new SongFileError(`The song's ${label} is invalid.`)
-    return createTrack(text(t.name, `${label} name`), parseSynth(t.synth, `The ${label} synth settings`))
+/** Versions 2 and 3, which differ only in where the instrument is kept. */
+function parseTracksAndPatterns(raw: Record<string, unknown>, timing: SongTiming, version: number): Song {
+  const rawTracks = list(raw.tracks, "The song's tracks").map((t, i) => {
+    if (!isObject(t)) throw new SongFileError(`The song's track ${i + 1} is invalid.`)
+    return t
   })
+  const tracks = rawTracks.map((t, i) => createTrack(text(t.name, `track ${i + 1} name`)))
+  // Version 2 only: each track's synth, handed to the patterns placed on it below.
+  const trackInstruments =
+    version === 2 ? rawTracks.map((t, i) => parseInstrument(t.synth, `The track ${i + 1} synth settings`)) : []
 
+  const rawClips = list(raw.clips, "The song's clips")
   const patterns: Pattern[] = list(raw.patterns, "The song's patterns").map((p, i) => {
     const label = `pattern ${i + 1}`
     if (!isObject(p)) throw new SongFileError(`The song's ${label} is invalid.`)
+    let instrument: Instrument
+    if (version === 2) {
+      const firstClip = rawClips.find((c) => isObject(c) && c.pattern === i) as Record<string, unknown> | undefined
+      const track = typeof firstClip?.track === 'number' ? firstClip.track : 0
+      instrument = trackInstruments[track] ?? DEFAULT_INSTRUMENT
+    } else {
+      instrument = parseInstrument(p.instrument, `The ${label} instrument settings`)
+    }
     const pattern = createPattern(
       text(p.name, `${label} name`),
       number(p.length, `${label} length`, { min: 0, exclusiveMin: true }),
+      [],
+      instrument,
+      // Added after version 3 first came out, so it may be missing: full volume.
+      p.volume === undefined ? 1 : number(p.volume, `${label} volume`, { min: 0, max: 1 }),
     )
-    const notes = list(p.notes, `The ${label} notes`).map((n, j) => clampNote(parseNote(n, `${label} note ${j + 1}`), pattern))
+    const notes = list(p.notes, `The ${label} notes`).map((n, j) =>
+      clampNote(parseNote(n, `${label} note ${j + 1}`), pattern),
+    )
     return { ...pattern, notes }
   })
 
   const song: Song = { ...timing, tracks, patterns, clips: [] }
-  const clips: Clip[] = list(raw.clips, "The song's clips").map((c, i) => {
+  const clips: Clip[] = rawClips.map((c, i) => {
     const label = `clip ${i + 1}`
     if (!isObject(c)) throw new SongFileError(`The song's ${label} is invalid.`)
     const pattern = patterns[number(c.pattern, `${label} pattern`, { min: 0, max: patterns.length - 1, integer: true })]
@@ -152,17 +182,31 @@ function parseVersion2(raw: Record<string, unknown>, timing: SongTiming): Song {
   return { ...song, clips }
 }
 
-function parseSynth(raw: unknown, label: string): SynthSettings {
+/**
+ * Reads an instrument, checking each setting against its range in
+ * definitions.ts. Synths saved before there were several instrument types
+ * have no `type`; they're the simple synth.
+ */
+function parseInstrument(raw: unknown, label: string): Instrument {
   if (!isObject(raw)) throw new SongFileError(`${label} are invalid.`)
-  const waves: SynthSettings['wave'][] = ['sine', 'square', 'sawtooth', 'triangle']
-  if (!waves.includes(raw.wave as SynthSettings['wave'])) {
-    throw new SongFileError(`Unknown synth wave "${String(raw.wave)}".`)
+  const type = raw.type ?? 'basic'
+  if (typeof type !== 'string' || !Object.hasOwn(INSTRUMENTS, type)) {
+    throw new SongFileError(`Unknown instrument "${String(type)}".`)
   }
-  return {
-    wave: raw.wave as SynthSettings['wave'],
-    attack: number(raw.attack, 'synth attack', { min: 0, max: 60 }),
-    release: number(raw.release, 'synth release', { min: 0, max: 60 }),
+  const params = INSTRUMENTS[type as InstrumentType].params as Record<string, NumberParam | ChoiceParam>
+  const instrument: Record<string, unknown> = { type }
+  for (const [key, spec] of Object.entries(params)) {
+    const value = raw[key]
+    const field = `${spec.label.toLowerCase()} setting`
+    if (spec.kind === 'number') {
+      instrument[key] = number(value, field, { min: spec.min, max: spec.max })
+    } else if (typeof value === 'string' && spec.options.includes(value)) {
+      instrument[key] = value
+    } else {
+      throw new SongFileError(`The song's ${field} is invalid (${JSON.stringify(value) ?? 'missing'}).`)
+    }
   }
+  return instrument as unknown as Instrument
 }
 
 function parseNote(raw: unknown, label: string): Note {

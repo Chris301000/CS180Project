@@ -4,6 +4,8 @@
   import type { AudioBackend } from './lib/audio/backend'
   import { AudioPlayer } from './lib/audio/player'
   import Playlist from './lib/playlist/Playlist.svelte'
+  import InstrumentPanel from './lib/instruments/InstrumentPanel.svelte'
+  import type { Instrument } from './lib/instruments/definitions'
   import {
     createDemoSong,
     createPattern,
@@ -116,6 +118,8 @@
   const playlistRect = $state({ x: 8, y: 8, width: 1000, height: 280 })
   let pianoRollOpen = $state(true)
   const pianoRollRect = $state({ x: 40, y: 300, width: 900, height: 380 })
+  let instrumentOpen = $state(false)
+  const instrumentRect = $state({ x: 560, y: 320, width: 420, height: 200 })
 
   // The selected pattern: the one the piano roll edits and that clicking in a
   // track places. Opening a file or undoing past it can leave this pointing at
@@ -125,6 +129,32 @@
 
   function editPattern(next: Pattern) {
     edit(replacePattern(song, next))
+  }
+
+  // Instrument and volume changes. While a knob or slider is moving, the song
+  // is swapped in directly so the sound follows, but not recorded in the undo
+  // history; letting go records one step from the song as it was before.
+
+  type PatternSound = Partial<Pick<Pattern, 'instrument' | 'volume'>>
+
+  function withSound(base: Song, changes: PatternSound): Song {
+    const pattern = openPattern && findPattern(base, openPattern.id)
+    return pattern ? replacePattern(base, { ...pattern, ...changes }) : base
+  }
+
+  function previewSound(changes: PatternSound) {
+    song = withSound(history.current, changes)
+  }
+
+  function changeSound(changes: PatternSound) {
+    const current = openPattern && findPattern(history.current, openPattern.id)
+    // Comparing as JSON compares the instrument's settings, not which object it is.
+    const same = (key: keyof PatternSound) => JSON.stringify(current?.[key]) === JSON.stringify(changes[key])
+    if (!current || (Object.keys(changes) as (keyof PatternSound)[]).every(same)) {
+      syncHistory() // Nothing changed after all; drop any preview.
+    } else {
+      edit(withSound(history.current, changes))
+    }
   }
 
   /** Opens a pattern in the piano roll, e.g. when its clip is double-clicked. */
@@ -202,6 +232,9 @@
     } else if (e.key === 'F7') {
       e.preventDefault()
       pianoRollOpen = !pianoRollOpen
+    } else if (e.key === 'F8') {
+      e.preventDefault()
+      instrumentOpen = !instrumentOpen
     }
   }
 </script>
@@ -236,6 +269,14 @@
       title="Show or hide the piano roll (F7)"
     >
       Piano roll
+    </button>
+    <button
+      class="file"
+      onclick={() => (instrumentOpen = !instrumentOpen)}
+      aria-pressed={instrumentOpen}
+      title="Show or hide the selected pattern's instrument (F8)"
+    >
+      Instrument
     </button>
 
     <button class="play" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
@@ -348,6 +389,32 @@
             {follow}
             onEdit={editPattern}
             onZoom={(z) => (pianoRollZoom = z)}
+          />
+        {:else}
+          <p class="empty">This song has no patterns.</p>
+        {/if}
+      </Window>
+    {/if}
+
+    {#if instrumentOpen}
+      <Window
+        title={openPattern ? `Instrument – ${openPattern.name}` : 'Instrument'}
+        bind:x={instrumentRect.x}
+        bind:y={instrumentRect.y}
+        bind:width={instrumentRect.width}
+        bind:height={instrumentRect.height}
+        minWidth={280}
+        minHeight={140}
+        onClose={() => (instrumentOpen = false)}
+      >
+        {#if openPattern}
+          <InstrumentPanel
+            instrument={openPattern.instrument}
+            volume={openPattern.volume}
+            onInput={(instrument) => previewSound({ instrument })}
+            onChange={(instrument) => changeSound({ instrument })}
+            onVolumeInput={(volume) => previewSound({ volume })}
+            onVolumeChange={(volume) => changeSound({ volume })}
           />
         {:else}
           <p class="empty">This song has no patterns.</p>
