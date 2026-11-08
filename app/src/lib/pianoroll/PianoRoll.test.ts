@@ -1,7 +1,7 @@
 import { render } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import PianoRoll from './PianoRoll.svelte'
-import { DEFAULT_SYNTH, createNote, type Note, type Song } from '../song/song'
+import { createNote, songFromNotes, type Note, type Pattern } from '../song/song'
 import { Transport } from '../song/transport'
 
 // jsdom has no layout, so the grid sits at (0, 0) and clientX/Y are grid
@@ -17,10 +17,11 @@ function pointer(el: Element, type: string, x: number, y: number, options: Point
 }
 
 function setup(notes: Note[] = []) {
-  const song: Song = { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2, notes, synth: DEFAULT_SYNTH }
-  const onEdit = vi.fn<(next: Song) => void>()
+  const song = songFromNotes({ bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2 }, notes)
+  const onEdit = vi.fn<(next: Pattern) => void>()
   const { container } = render(PianoRoll, {
     song,
+    pattern: song.patterns[0],
     transport: new Transport(() => song, () => 0),
     viewport,
     snap: SNAP,
@@ -39,7 +40,7 @@ function setup(notes: Note[] = []) {
   return { song, grid, onEdit, drag, click, container }
 }
 
-const lastSong = (onEdit: ReturnType<typeof setup>['onEdit']) => onEdit.mock.lastCall![0]
+const lastPattern = (onEdit: ReturnType<typeof setup>['onEdit']) => onEdit.mock.lastCall![0]
 
 beforeEach(() => {
   Element.prototype.setPointerCapture = vi.fn()
@@ -51,8 +52,8 @@ describe('adding notes', () => {
     const { click, onEdit } = setup()
     click(50, rowY(60))
     expect(onEdit).toHaveBeenCalledOnce()
-    expect(lastSong(onEdit).notes).toHaveLength(1)
-    expect(lastSong(onEdit).notes[0]).toMatchObject({ pitch: 60, start: 48, duration: SNAP })
+    expect(lastPattern(onEdit).notes).toHaveLength(1)
+    expect(lastPattern(onEdit).notes[0]).toMatchObject({ pitch: 60, start: 48, duration: SNAP })
   })
 
   it('makes new notes the length of the last note clicked', () => {
@@ -60,14 +61,14 @@ describe('adding notes', () => {
     const { click, onEdit } = setup([note])
     click(10, rowY(60))
     click(200, rowY(62))
-    expect(lastSong(onEdit).notes.at(-1)).toMatchObject({ pitch: 62, duration: 72 })
+    expect(lastPattern(onEdit).notes.at(-1)).toMatchObject({ pitch: 62, duration: 72 })
   })
 
   it('lets the same drag move a new note, as one edit', () => {
     const { drag, onEdit } = setup()
     drag([48, rowY(60)], [96, rowY(62)])
     expect(onEdit).toHaveBeenCalledOnce()
-    expect(lastSong(onEdit).notes[0]).toMatchObject({ pitch: 62, start: 96 })
+    expect(lastPattern(onEdit).notes[0]).toMatchObject({ pitch: 62, start: 96 })
   })
 })
 
@@ -76,21 +77,21 @@ describe('moving notes', () => {
     const note = createNote({ pitch: 60, start: 96, duration: 96 })
     const { drag, onEdit } = setup([note])
     drag([120, rowY(60)], [150, rowY(64)])
-    expect(lastSong(onEdit).notes[0]).toMatchObject({ pitch: 64, start: 120, duration: 96 })
+    expect(lastPattern(onEdit).notes[0]).toMatchObject({ pitch: 64, start: 120, duration: 96 })
   })
 
   it('ignores snapping while Alt is held', () => {
     const note = createNote({ pitch: 60, start: 96, duration: 96 })
     const { drag, onEdit } = setup([note])
     drag([120, rowY(60)], [127, rowY(60)], { altKey: true })
-    expect(lastSong(onEdit).notes[0].start).toBe(103)
+    expect(lastPattern(onEdit).notes[0].start).toBe(103)
   })
 
-  it('keeps a dragged note inside the song', () => {
+  it('keeps a dragged note inside the pattern', () => {
     const note = createNote({ pitch: 60, start: 96, duration: 96 })
     const { drag, onEdit } = setup([note])
     drag([120, rowY(60)], [-500, rowY(60)])
-    expect(lastSong(onEdit).notes[0].start).toBe(0)
+    expect(lastPattern(onEdit).notes[0].start).toBe(0)
   })
 
   it('makes no edit when the mouse wobbles without moving a whole step', () => {
@@ -116,21 +117,21 @@ describe('resizing notes', () => {
     const note = createNote({ pitch: 60, start: 0, duration: 96 })
     const { drag, onEdit } = setup([note])
     drag([94, rowY(60)], [146, rowY(60)])
-    expect(lastSong(onEdit).notes[0]).toMatchObject({ start: 0, duration: 144 })
+    expect(lastPattern(onEdit).notes[0]).toMatchObject({ start: 0, duration: 144 })
   })
 
   it('never shrinks below one snap step', () => {
     const note = createNote({ pitch: 60, start: 96, duration: 96 })
     const { drag, onEdit } = setup([note])
     drag([190, rowY(60)], [0, rowY(60)])
-    expect(lastSong(onEdit).notes[0].duration).toBe(SNAP)
+    expect(lastPattern(onEdit).notes[0].duration).toBe(SNAP)
   })
 
-  it('stops at the end of the song', () => {
+  it('stops at the end of the pattern', () => {
     const note = createNote({ pitch: 60, start: 700, duration: 48 })
     const { drag, onEdit } = setup([note])
     drag([746, rowY(60)], [5000, rowY(60)])
-    expect(lastSong(onEdit).notes[0].duration).toBe(768 - 700)
+    expect(lastPattern(onEdit).notes[0].duration).toBe(768 - 700)
   })
 })
 
@@ -139,7 +140,7 @@ describe('deleting notes', () => {
     const note = createNote({ pitch: 60, start: 0, duration: 96 })
     const { click, onEdit } = setup([note])
     click(10, rowY(60), { button: 2 })
-    expect(lastSong(onEdit).notes).toEqual([])
+    expect(lastPattern(onEdit).notes).toEqual([])
   })
 
   it('deletes every note swept by a right-drag, as one edit', () => {
@@ -148,7 +149,7 @@ describe('deleting notes', () => {
     const { drag, onEdit } = setup([a, b])
     drag([10, rowY(60)], [110, rowY(60)], { button: 2 })
     expect(onEdit).toHaveBeenCalledOnce()
-    expect(lastSong(onEdit).notes).toEqual([])
+    expect(lastPattern(onEdit).notes).toEqual([])
   })
 
   it('does nothing when right-clicking empty space', () => {
@@ -162,7 +163,7 @@ describe('deleting notes', () => {
     const { click, onEdit } = setup([note])
     click(10, rowY(60))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true }))
-    expect(lastSong(onEdit).notes).toEqual([])
+    expect(lastPattern(onEdit).notes).toEqual([])
   })
 
   it('does nothing on Backspace after Escape clears the selection', () => {
