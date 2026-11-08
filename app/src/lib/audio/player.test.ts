@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { AudioPlayer, notesStartingIn } from './player'
+import { AudioPlayer, channelsOf, notesStartingIn } from './player'
 import { RecordingBackend } from './recordingBackend'
 import { pitchToFrequency } from './backend'
 import { removeClips } from '../song/clips'
@@ -97,7 +97,11 @@ describe('notesStartingIn', () => {
       patterns: [lead, bells],
       clips: [createClip(lead, track, 0), createClip(bells, track, 0)],
     }
-    expect(notesStartingIn(song, 0, 384).map((n) => n.instrument)).toEqual([DEFAULT_INSTRUMENT, fm])
+    expect(notesStartingIn(song, 0, 384).map((n) => n.channelId)).toEqual([lead.id, bells.id])
+    expect(channelsOf(song)).toEqual([
+      { id: lead.id, instrument: DEFAULT_INSTRUMENT, volume: 1 },
+      { id: bells.id, instrument: fm, volume: 1 },
+    ])
   })
 })
 
@@ -126,17 +130,27 @@ describe('AudioPlayer', () => {
     expect(backend.now()).toBeLessThan(10.5)
   })
 
-  it('sends the note details and its instrument to the backend', () => {
-    const { backend, transport } = setup([createNote({ pitch: 72, start: 0, duration: 96, velocity: 0.5 })])
+  it("sends the note details to its pattern's channel", () => {
+    const { state, backend, transport } = setup([createNote({ pitch: 72, start: 0, duration: 96, velocity: 0.5 })])
     transport.play()
-    expect(backend.notes[0]).toMatchObject({ pitch: 72, duration: 0.5, velocity: 0.5, instrument: DEFAULT_INSTRUMENT })
+    expect(backend.notes[0]).toMatchObject({ channelId: state.song.patterns[0].id, pitch: 72, duration: 0.5, velocity: 0.5 })
   })
 
-  it("sends each note's pattern volume to the backend", () => {
+  it('sets up a channel for each pattern before playing', () => {
     const { state, backend, transport } = setup([note(0)])
-    state.song = replacePattern(state.song, { ...state.song.patterns[0], volume: 0.4 })
     transport.play()
-    expect(backend.notes[0].volume).toBe(0.4)
+    expect(backend.channels).toEqual(channelsOf(state.song))
+  })
+
+  it('updates the channels when the patterns change, and only then', () => {
+    const { state, backend, player } = setup([note(0)])
+    player.syncChannels()
+    player.syncChannels()
+    expect(backend.channelSyncs).toBe(1)
+    state.song = replacePattern(state.song, { ...state.song.patterns[0], volume: 0.4 })
+    player.syncChannels()
+    expect(backend.channelSyncs).toBe(2)
+    expect(backend.channels[0].volume).toBe(0.4)
   })
 
   it('plays each note once across many passes', () => {

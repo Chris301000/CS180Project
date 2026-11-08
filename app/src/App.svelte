@@ -185,10 +185,15 @@
     transport.loop = loop
   })
   $effect(() => backend.setMasterGain(volume))
+  let player: AudioPlayer | undefined
   $effect(() => {
-    const player = new AudioPlayer(() => song, transport, backend)
-    return () => player.dispose()
+    player = new AudioPlayer(() => song, transport, backend)
+    return () => player?.dispose()
   })
+  // Keep the backend's channels (one instrument per pattern) in step with the
+  // song, playing or not, so changes like the volume slider are heard at once.
+  // syncChannels reads `song`, so this runs again whenever the song changes.
+  $effect(() => player?.syncChannels())
 
   $effect(() => {
     let raf = 0

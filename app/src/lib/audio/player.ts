@@ -1,13 +1,13 @@
-import type { AudioBackend } from './backend'
+import type { AudioBackend, ChannelSetup } from './backend'
 import {
   findPattern,
   findTrack,
   secondsToTicks,
   playLengthTicks,
   ticksToSeconds,
+  type Pattern,
   type Song,
 } from '../song/song'
-import type { Instrument } from '../instruments/definitions'
 import type { Transport } from '../song/transport'
 
 /** How far ahead notes are queued, in seconds. */
@@ -15,17 +15,20 @@ const LOOKAHEAD = 0.1
 /** How often the queue is topped up, in milliseconds. */
 const INTERVAL = 25
 
-/** A note as it plays in the song: in song time, cut to its clip, with its pattern's instrument. */
+/** A note as it plays in the song: in song time, cut to its clip, on its pattern's channel. */
 export interface SongNote {
+  /** The channel that plays it: its pattern's, since each pattern has its own instrument. */
+  channelId: string
   pitch: number
   /** In ticks from the start of the song. */
   start: number
   duration: number
   velocity: number
-  /** The pattern's volume slider, 0–1. */
-  volume: number
-  instrument: Instrument
 }
+
+/** The backend channels a song needs: one per pattern, playing its instrument at its volume. */
+export const channelsOf = (song: Song): ChannelSetup[] =>
+  song.patterns.map((p) => ({ id: p.id, instrument: p.instrument, volume: p.volume }))
 
 /**
  * Notes starting in [from, to), in song ticks, from every clip. A clip plays
@@ -46,12 +49,11 @@ export function notesStartingIn(song: Song, from: number, to: number): SongNote[
       const start = clip.start + note.start - clip.offset
       if (start < from || start >= to) continue
       result.push({
+        channelId: pattern.id,
         pitch: note.pitch,
         start,
         duration: Math.min(note.duration, clipEnd - note.start),
         velocity: note.velocity,
-        volume: pattern.volume,
-        instrument: pattern.instrument,
       })
     }
   }
@@ -70,6 +72,8 @@ export class AudioPlayer {
   private cursorTime = 0
   private timer: ReturnType<typeof setInterval> | undefined
   private unsubscribe: () => void
+  /** The patterns the backend's channels were last set up from, to skip the work when they haven't changed. */
+  private syncedPatterns: Pattern[] | null = null
 
   constructor(
     private getSong: () => Song,
@@ -79,8 +83,22 @@ export class AudioPlayer {
     this.unsubscribe = transport.subscribe(() => this.onTransportChange())
   }
 
+  /**
+   * Tells the backend which channels the song needs, if its patterns changed.
+   * Edits replace the patterns list rather than changing it, so comparing the
+   * list itself is enough. Cheap when nothing changed, so it's safe to call often.
+   */
+  syncChannels() {
+    const song = this.getSong()
+    if (song.patterns === this.syncedPatterns) return
+    this.syncedPatterns = song.patterns
+    this.backend.setChannels(channelsOf(song))
+  }
+
   /** Queues any notes due within the lookahead. Runs on a timer while playing. */
   update() {
+    // Before scheduling, so new patterns have a channel to play on.
+    this.syncChannels()
     const position = this.transport.position()
     if (!this.transport.isPlaying) return
 
@@ -104,12 +122,11 @@ export class AudioPlayer {
       if (stop <= this.cursorTick) break
       for (const note of notesStartingIn(song, this.cursorTick, stop)) {
         this.backend.playNote({
+          channelId: note.channelId,
           pitch: note.pitch,
           time: this.cursorTime + ticksToSeconds(note.start - this.cursorTick, song),
           duration: ticksToSeconds(note.duration, song),
           velocity: note.velocity,
-          volume: note.volume,
-          instrument: note.instrument,
         })
       }
       this.cursorTime += ticksToSeconds(stop - this.cursorTick, song)
