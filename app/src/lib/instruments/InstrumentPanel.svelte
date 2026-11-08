@@ -29,9 +29,31 @@
     onVolumeInput: (volume: number) => void
     /** When the slider is let go (or moved with the keyboard). One undo step. */
     onVolumeChange: (volume: number) => void
+    /** The size the whole panel needs to show the editor without scrolling, when the editor reports one. */
+    onPreferredSize?: (size: { width: number; height: number }) => void
   }
 
-  let { instrument, channelId, audio, volume, onInput, onChange, onVolumeInput, onVolumeChange }: Props = $props()
+  let {
+    instrument,
+    channelId,
+    audio,
+    volume,
+    onInput,
+    onChange,
+    onVolumeInput,
+    onVolumeChange,
+    onPreferredSize,
+  }: Props = $props()
+
+  let header: HTMLElement
+
+  /** The editor's size plus the header above it, and at least as wide as the header. */
+  function onEditorSize(size: { width: number; height: number }) {
+    onPreferredSize?.({
+      width: Math.max(size.width, header.scrollWidth),
+      height: size.height + header.offsetHeight,
+    })
+  }
 
   // Components are ordinary values in Svelte 5, so the editor can be picked
   // at runtime and used as a tag below. It changes when the type changes.
@@ -52,7 +74,7 @@
 </script>
 
 <div class="panel">
-  <header>
+  <header bind:this={header}>
     <label>
       Synth
       <select value={choiceOf(instrument)} onchange={(e) => swap(e.currentTarget.value)}>
@@ -88,7 +110,7 @@
   </header>
 
   <div class="editor">
-    <Editor {instrument} {onInput} {onChange} {channelId} {audio} />
+    <Editor {instrument} {onInput} {onChange} {channelId} {audio} onPreferredSize={onEditorSize} />
   </div>
 </div>
 

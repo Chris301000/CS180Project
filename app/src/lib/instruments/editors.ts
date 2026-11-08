@@ -23,6 +23,11 @@ export interface EditorProps<T> {
   /** The channel this instrument plays on. Only plugin editors need it, with `audio`. */
   channelId: string
   audio: PluginHost
+  /**
+   * For editors whose size isn't known in advance (a plugin's own interface):
+   * report the size they need, in pixels, so the window can fit them.
+   */
+  onPreferredSize?: (size: { width: number; height: number }) => void
 }
 
 export const EDITORS: { [K in InstrumentType]: Component<EditorProps<InstrumentOf<K>>> } = {

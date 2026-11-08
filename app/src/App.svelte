@@ -18,6 +18,7 @@
   } from './lib/song/song'
   import { addPattern, addTrack, replacePattern, setBars } from './lib/song/edits'
   import { PIANO_ROLL_ZOOM, PLAYLIST_ZOOM, type ZoomRange } from './lib/ui/zoom'
+  import { TITLE_BAR_HEIGHT } from './lib/ui/windowGeometry'
   import { Transport } from './lib/song/transport'
   import { History } from './lib/song/history'
   import type { Viewport } from './lib/song/coords'
@@ -120,6 +121,18 @@
   const pianoRollRect = $state({ x: 40, y: 300, width: 900, height: 380 })
   let instrumentOpen = $state(false)
   const instrumentRect = $state({ x: 560, y: 320, width: 420, height: 200 })
+
+  /**
+   * Resizes the Instrument window to fit its content, e.g. a plugin's own
+   * interface when it loads. It grows to the right and down from where it is,
+   * but no further than the browser window.
+   */
+  function fitInstrumentWindow({ width, height }: { width: number; height: number }) {
+    const BORDER = 2
+    const MARGIN = 16
+    instrumentRect.width = Math.min(width + BORDER, window.innerWidth - instrumentRect.x - MARGIN)
+    instrumentRect.height = Math.min(height + TITLE_BAR_HEIGHT + BORDER, window.innerHeight - instrumentRect.y - MARGIN)
+  }
 
   // The selected pattern: the one the piano roll edits and that clicking in a
   // track places. Opening a file or undoing past it can leave this pointing at
@@ -422,6 +435,7 @@
             onChange={(instrument) => changeSound({ instrument })}
             onVolumeInput={(volume) => previewSound({ volume })}
             onVolumeChange={(volume) => changeSound({ volume })}
+            onPreferredSize={fitInstrumentWindow}
           />
         {:else}
           <p class="empty">This song has no patterns.</p>

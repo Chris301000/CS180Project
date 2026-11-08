@@ -127,6 +127,26 @@ describe('WamEditor', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it("reports the plugin interface's size, plus padding, so the window can fit it", async () => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(486)
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(216)
+    const onPreferredSize = vi.fn()
+    const fake = fakeAudio()
+    render(WamEditor, {
+      instrument: instrument(),
+      onInput: vi.fn(),
+      onChange: vi.fn(),
+      channelId: 'p1',
+      audio: fake.audio,
+      onPreferredSize,
+    })
+    await fake.start()
+    await flush()
+    expect(onPreferredSize).toHaveBeenCalledOnce()
+    expect(onPreferredSize).toHaveBeenCalledWith({ width: 502, height: 232 })
+    vi.restoreAllMocks()
+  })
+
   it("removes the plugin's interface when it closes", async () => {
     const { start, plugin, unmount } = setup()
     await start()

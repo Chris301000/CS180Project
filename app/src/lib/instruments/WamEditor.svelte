@@ -12,10 +12,12 @@
   import { sameState, type WamPlugin } from './definitions'
   import type { EditorProps } from './editors'
 
-  let { instrument, onChange, channelId, audio }: EditorProps<WamPlugin> = $props()
+  let { instrument, onChange, channelId, audio, onPreferredSize }: EditorProps<WamPlugin> = $props()
 
   /** How long after the last interaction to read the plugin's settings. */
   const SETTLE_MS = 300
+  /** The padding around the editor (see `.wam` below), added to the interface's size when reporting it. */
+  const PADDING = 8
 
   let plugin = $state.raw<PluginHandle | undefined>()
   /** 'stopped' means audio hasn't started, so the plugin doesn't exist yet. */
@@ -54,19 +56,44 @@
     if (!p || status !== 'ready') return
     let gui: Element | null = null
     let cancelled = false
+    let observer: ResizeObserver | undefined
     void p.createGui().then((element) => {
       if (cancelled) return p.destroyGui(element)
       gui = element
       guiHost.appendChild(element)
+      observer = reportSizeOnce(element as HTMLElement)
     })
     return () => {
       cancelled = true
+      observer?.disconnect()
       if (gui) {
         p.destroyGui(gui)
         gui.remove()
       }
     }
   })
+
+  /**
+   * Reports the interface's size once it has one, so the window can fit it
+   * when the plugin loads. Only once: after that the window is the user's to
+   * resize. Plugins may draw their interface a moment after it's added, so
+   * this waits for the first non-zero size.
+   */
+  function reportSizeOnce(element: HTMLElement): ResizeObserver | undefined {
+    const report = () => {
+      const width = element.offsetWidth
+      const height = element.offsetHeight
+      if (width === 0 || height === 0) return false
+      onPreferredSize?.({ width: width + PADDING * 2, height: height + PADDING * 2 })
+      return true
+    }
+    if (report() || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(() => {
+      if (report()) observer.disconnect()
+    })
+    observer.observe(element)
+    return observer
+  }
 
   let settleTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -117,6 +144,7 @@
 
 <style>
   .wam {
+    /* Keep in step with PADDING above. */
     padding: 8px;
   }
 
