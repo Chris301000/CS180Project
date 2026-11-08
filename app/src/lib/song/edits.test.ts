@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { addNote, clampNote, noteAt, removeNotes, replacePattern, updateNote } from './edits'
+import { addNote, addPattern, addTrack, clampNote, noteAt, removeNotes, replacePattern, setBars, updateNote } from './edits'
 import { History } from './history'
-import { createDemoSong, createNote, createPattern, type Pattern } from './song'
+import { createDemoSong, createNote, createPattern, createTrack, type Pattern } from './song'
 
 function emptyPattern(): Pattern {
   return createPattern('Test', 768)
@@ -79,6 +79,32 @@ describe('replacePattern', () => {
     const song = createDemoSong()
     expect(replacePattern(song, song.patterns[0])).toBe(song)
     expect(replacePattern(song, emptyPattern())).toBe(song)
+  })
+})
+
+describe('song-level edits', () => {
+  it('adds tracks and patterns at the end', () => {
+    const song = createDemoSong()
+    const track = createTrack('Bass')
+    const pattern = createPattern('Groove', 384)
+    expect(addTrack(song, track).tracks.at(-1)).toBe(track)
+    expect(addPattern(song, pattern).patterns.at(-1)).toBe(pattern)
+    expect(song.tracks).toHaveLength(2)
+  })
+
+  it('changes the song length in whole bars', () => {
+    const song = createDemoSong()
+    expect(setBars(song, 16).bars).toBe(16)
+    expect(setBars(song, 6.4).bars).toBe(6)
+  })
+
+  it('never gets shorter than the last clip, and returns the same song when unchanged', () => {
+    const song = setBars(createDemoSong(), 8)
+    // The demo clips end at bar 4.
+    expect(setBars(song, 2).bars).toBe(4)
+    expect(setBars(song, 0).bars).toBe(4)
+    expect(setBars(song, Number.NaN).bars).toBe(4)
+    expect(setBars(song, 8)).toBe(song)
   })
 })
 

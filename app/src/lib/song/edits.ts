@@ -8,7 +8,7 @@
 // the pattern it's editing; replacePattern puts the result back into the song.
 
 import { clampPitch } from './coords'
-import type { Note, Pattern, Song } from './song'
+import { ticksPerBar, type Note, type Pattern, type Song, type Track } from './song'
 
 export const MIN_DURATION = 1
 
@@ -41,6 +41,23 @@ export function updateNote(pattern: Pattern, id: string, changes: Partial<Omit<N
 /** The note covering `tick` on row `pitch`. Later notes are drawn on top, so they win. */
 export function noteAt(pattern: Pattern, tick: number, pitch: number): Note | undefined {
   return pattern.notes.findLast((n) => n.pitch === pitch && tick >= n.start && tick < n.start + n.duration)
+}
+
+// Song-level edits: tracks, patterns and length.
+
+export const addTrack = (song: Song, track: Track): Song => ({ ...song, tracks: [...song.tracks, track] })
+
+export const addPattern = (song: Song, pattern: Pattern): Song => ({ ...song, patterns: [...song.patterns, pattern] })
+
+/**
+ * Changes the song's length in bars. It can't get shorter than the end of the
+ * last clip, so shortening never moves or cuts clips.
+ */
+export function setBars(song: Song, bars: number): Song {
+  const lastClipEnd = Math.max(0, ...song.clips.map((c) => c.start + c.length))
+  const minBars = Math.max(1, Math.ceil(lastClipEnd / ticksPerBar(song)))
+  const next = Math.max(minBars, Math.round(bars) || minBars)
+  return next === song.bars ? song : { ...song, bars: next }
 }
 
 /** Swaps in an edited pattern (matched by id). Returns the same song if nothing changed. */

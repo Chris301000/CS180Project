@@ -9,7 +9,9 @@ import { createDemoSong, songFromNotes } from './lib/song/song'
 const key = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent('keydown', init))
 
 function setup() {
-  const { container, getByLabelText, getByTestId, queryByRole } = render(App, { backend: new RecordingBackend() })
+  const { container, getByLabelText, getByTestId, getByText, queryByRole } = render(App, {
+    backend: new RecordingBackend(),
+  })
   const grid = container.querySelector('.grid')!
   const notes = () => container.querySelectorAll('.note').length
   // Top row of the grid, where the demo song has no notes.
@@ -23,7 +25,8 @@ function setup() {
     const input = getByTestId('song-file-input') as HTMLInputElement
     await fireEvent.change(input, { target: { files: [new File([text], 'song.litedaw.json')] } })
   }
-  return { getByLabelText, notes, addNote, openFile, queryByRole }
+  const title = () => container.querySelector('section[aria-label^="Piano roll"]')?.getAttribute('aria-label')
+  return { container, getByLabelText, getByText, notes, addNote, openFile, queryByRole, title }
 }
 
 beforeEach(() => {
@@ -93,6 +96,35 @@ describe('transport controls', () => {
     ;(getByLabelText('Stop') as HTMLButtonElement).click()
     await tick()
     expect(getByLabelText('Play')).toBeTruthy()
+  })
+})
+
+describe('track list and piano roll', () => {
+  it("opens a clip's pattern in the piano roll on double-click", async () => {
+    const { container, title } = setup()
+    expect(title()).toBe('Piano roll – Chords')
+    // The demo song's melody clip is on the second track (56px rows), from tick 0.
+    container.querySelector('.lanes')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: 10, clientY: 76 }))
+    await tick()
+    expect(title()).toBe('Piano roll – Melody')
+  })
+
+  it('makes a new empty pattern and opens it', async () => {
+    const { getByText, notes, title } = setup()
+    getByText('+ Pattern').click()
+    await tick()
+    expect(title()).toBe('Piano roll – Pattern 3')
+    expect(notes()).toBe(0)
+  })
+
+  it('deletes a selected note only while working in the piano roll', async () => {
+    const { container, notes, addNote } = setup()
+    const start = notes()
+    await addNote() // Adds and selects a note.
+    container.querySelector('.lanes')!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 1 }))
+    key({ key: 'Delete' })
+    await tick()
+    expect(notes()).toBe(start + 1)
   })
 })
 

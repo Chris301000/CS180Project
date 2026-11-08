@@ -90,7 +90,19 @@ export const DEFAULT_PPQ = 96
 
 export const ticksPerBar = (song: Pick<Song, 'ppq' | 'beatsPerBar'>) => song.ppq * song.beatsPerBar
 
+/** How long the timeline is: the most the track list shows, and where clips have to end. */
 export const songLengthTicks = (song: Pick<Song, 'ppq' | 'beatsPerBar' | 'bars'>) => ticksPerBar(song) * song.bars
+
+/**
+ * How much of the song plays before stopping or looping: up to the end of the
+ * last clip, rounded up to a whole bar, like FL. At least one bar, so an
+ * empty song still has something to loop over.
+ */
+export function playLengthTicks(song: Song): number {
+  const bar = ticksPerBar(song)
+  const lastClipEnd = Math.max(0, ...song.clips.map((c) => c.start + c.length))
+  return Math.min(songLengthTicks(song), Math.max(bar, Math.ceil(lastClipEnd / bar) * bar))
+}
 
 export const ticksToSeconds = (ticks: number, song: Pick<Song, 'bpm' | 'ppq'>) =>
   (ticks / song.ppq) * (60 / song.bpm)
@@ -164,7 +176,7 @@ export function patternPosition(song: Song, patternId: string, tick: number): nu
   return clip ? tick - clip.start + clip.offset : null
 }
 
-/** A 4-bar placeholder song so there is something to look at: chords and a melody on two tracks. */
+/** A placeholder song so there is something to look at: a 4-bar loop of chords and a melody on two tracks, in a 16-bar timeline. */
 export function createDemoSong(): Song {
   const ppq = DEFAULT_PPQ
   const beat = ppq
@@ -204,7 +216,7 @@ export function createDemoSong(): Song {
     bpm: 120,
     ppq,
     beatsPerBar: 4,
-    bars: 4,
+    bars: 16,
     tracks: [chordTrack, melodyTrack],
     patterns: [chordPattern, melodyPattern],
     clips: [createClip(chordPattern, chordTrack, 0), createClip(melodyPattern, melodyTrack, 0)],

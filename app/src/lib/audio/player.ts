@@ -3,7 +3,7 @@ import {
   findPattern,
   findTrack,
   secondsToTicks,
-  songLengthTicks,
+  playLengthTicks,
   ticksToSeconds,
   type Song,
   type SynthSettings,
@@ -83,7 +83,7 @@ export class AudioPlayer {
     if (!this.transport.isPlaying) return
 
     const song = this.getSong()
-    const end = songLengthTicks(song)
+    const end = playLengthTicks(song)
     const now = this.backend.now()
     if (end <= 0) return
 

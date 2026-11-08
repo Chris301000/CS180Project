@@ -19,6 +19,8 @@
     minHeight?: number
     /** Shows a close button when given. The parent decides what closing means. */
     onClose?: () => void
+    /** Extra controls shown in the title bar, before the window buttons (e.g. a zoom slider). */
+    actions?: Snippet
     children: Snippet
   }
 
@@ -31,6 +33,7 @@
     minWidth = 240,
     minHeight = 140,
     onClose,
+    actions,
     children,
   }: Props = $props()
 
@@ -78,8 +81,11 @@
     e.preventDefault() // Don't select text while dragging.
   }
 
+  /** Controls in the title bar (buttons, sliders) work as usual instead of dragging the window. */
+  const isControl = (target: EventTarget | null) => !!(target as HTMLElement).closest('button, input, select, label')
+
   function onTitleDown(e: PointerEvent) {
-    if (maximized || (e.target as HTMLElement).closest('button')) return
+    if (maximized || isControl(e.target)) return
     begin(e, null)
   }
 
@@ -134,9 +140,12 @@
     onpointermove={onGestureMove}
     onpointerup={endGesture}
     onpointercancel={endGesture}
-    ondblclick={(e) => !(e.target as HTMLElement).closest('button') && toggleMaximized()}
+    ondblclick={(e) => !isControl(e.target) && toggleMaximized()}
   >
     <span class="title">{title}</span>
+    {#if actions}
+      <div class="actions">{@render actions()}</div>
+    {/if}
     <button onclick={toggleMaximized} aria-label={maximized ? 'Restore' : 'Maximize'} title={maximized ? 'Restore' : 'Maximize'}>
       {maximized ? '❐' : '□'}
     </button>
@@ -205,6 +214,15 @@
     text-overflow: ellipsis;
     color: var(--text-dim);
     font-size: 12px;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 6px;
+    color: var(--text-dim);
+    font-size: 11px;
   }
 
   button {

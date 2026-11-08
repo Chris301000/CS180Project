@@ -15,6 +15,7 @@
   import { MIN_DURATION, addNote, noteAt, removeNotes, updateNote } from '../song/edits'
   import { createNote, patternPosition, ticksPerBar, type Note, type Pattern, type Song } from '../song/song'
   import type { Transport } from '../song/transport'
+  import { PIANO_ROLL_ZOOM, zoomOnCtrlWheel } from '../ui/zoom'
 
   interface Props {
     /** The whole song: used for its timing, and to find where this pattern is playing. */
@@ -29,9 +30,11 @@
     onEdit: (next: Pattern) => void
     /** Scroll horizontally to keep the playhead in view while playing. */
     follow?: boolean
+    /** Called with a new horizontal zoom (pixels per tick) when Ctrl+wheel is used. */
+    onZoom?: (pxPerTick: number) => void
   }
 
-  let { song, pattern, transport, viewport, snap, onEdit, follow = true }: Props = $props()
+  let { song, pattern, transport, viewport, snap, onEdit, follow = true, onZoom }: Props = $props()
 
   const KEYS_WIDTH = 64
   const RULER_HEIGHT = 24
@@ -55,6 +58,8 @@
   /** Length of new notes: the last note clicked or resized, like FL. */
   let lastDuration = $state<number | null>(null)
   let cursor = $state('crosshair')
+  /** Whether the last click was in here, so Delete only deletes notes when you're working in the piano roll. */
+  let active = false
 
   // Rows top to bottom, highest pitch first.
   const pitches = Array.from({ length: PITCH_COUNT }, (_, i) => MAX_PITCH - i)
@@ -76,6 +81,15 @@
     // Start scrolled to around C6 so the middle of the keyboard is visible.
     scroller.scrollTop = pitchToY(84, viewport)
   })
+
+  $effect(() =>
+    zoomOnCtrlWheel(scroller, {
+      gutter: KEYS_WIDTH,
+      range: PIANO_ROLL_ZOOM,
+      get: () => viewport.pxPerTick,
+      set: (pxPerTick) => onZoom?.(pxPerTick),
+    }),
+  )
 
   // The playhead moves every frame, so it's positioned directly instead of
   // through reactive state; otherwise every frame would make Svelte re-check the whole roll.
@@ -226,6 +240,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (!active) return
     if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea')) return
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
       e.preventDefault()
@@ -237,7 +252,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKeydown} />
+<svelte:window onkeydown={onKeydown} onpointerdown={(e) => (active = scroller.contains(e.target as Node))} />
 
 <div class="scroller" bind:this={scroller}>
   <div

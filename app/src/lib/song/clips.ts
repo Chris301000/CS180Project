@@ -66,6 +66,11 @@ export function trimClipStart(song: Song, id: string, start: number): Song {
   return updateClip(song, id, { start: clip.start + delta, offset: clip.offset + delta, length: end - (clip.start + delta) })
 }
 
+/** The clip covering song time `tick` on a track. Later clips are drawn on top, so they win. */
+export function clipAt(song: Song, tick: number, trackId: string): Clip | undefined {
+  return song.clips.findLast((c) => c.trackId === trackId && tick >= c.start && tick < c.start + c.length)
+}
+
 /** Drags a clip's right edge to song time `end`. It can't go past the pattern's end. */
 export function trimClipEnd(song: Song, id: string, end: number): Song {
   const clip = song.clips.find((c) => c.id === id)

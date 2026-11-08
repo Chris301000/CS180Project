@@ -3,8 +3,19 @@
   import Window from './lib/ui/Window.svelte'
   import type { AudioBackend } from './lib/audio/backend'
   import { AudioPlayer } from './lib/audio/player'
-  import { createDemoSong, findPattern, formatPosition, type Pattern, type Song } from './lib/song/song'
-  import { replacePattern } from './lib/song/edits'
+  import Playlist from './lib/playlist/Playlist.svelte'
+  import {
+    createDemoSong,
+    createPattern,
+    createTrack,
+    findPattern,
+    formatPosition,
+    ticksPerBar,
+    type Pattern,
+    type Song,
+  } from './lib/song/song'
+  import { addPattern, addTrack, replacePattern, setBars } from './lib/song/edits'
+  import { PIANO_ROLL_ZOOM, PLAYLIST_ZOOM, type ZoomRange } from './lib/ui/zoom'
   import { Transport } from './lib/song/transport'
   import { History } from './lib/song/history'
   import type { Viewport } from './lib/song/coords'
@@ -90,25 +101,53 @@
   let playing = $state(transport.isPlaying)
   let loop = $state(transport.loop)
   let follow = $state(true)
-  let zoom = $state(0.6)
+  // Each view has its own horizontal zoom, in pixels per tick.
+  let pianoRollZoom = $state(0.6)
+  let playlistZoom = $state(0.1)
   let volume = $state(0.8)
   let positionText = $state('1:1:00')
 
-  const viewport: Viewport = $derived({ pxPerTick: zoom, rowHeight: 16 })
+  const viewport: Viewport = $derived({ pxPerTick: pianoRollZoom, rowHeight: 16 })
 
-  // The piano roll window. Its position and size live here rather than in the
-  // window, so they survive closing and reopening it.
+  // The two windows. Their positions and sizes live here rather than in the
+  // windows, so they survive closing and reopening them. The playlist starts
+  // across the top and the piano roll below it, so both can be seen at once.
+  let playlistOpen = $state(true)
+  const playlistRect = $state({ x: 8, y: 8, width: 1000, height: 280 })
   let pianoRollOpen = $state(true)
-  const pianoRollRect = $state({ x: 16, y: 16, width: 960, height: 540 })
+  const pianoRollRect = $state({ x: 40, y: 300, width: 900, height: 380 })
 
-  // Which pattern the piano roll is editing. Opening a file or undoing past it
-  // can leave this pointing at a pattern that no longer exists, so fall back
-  // to the first one.
+  // The selected pattern: the one the piano roll edits and that clicking in a
+  // track places. Opening a file or undoing past it can leave this pointing at
+  // a pattern that no longer exists, so fall back to the first one.
   let openPatternId = $state(history.current.patterns[0]?.id ?? '')
   const openPattern = $derived(findPattern(song, openPatternId) ?? song.patterns[0])
 
   function editPattern(next: Pattern) {
     edit(replacePattern(song, next))
+  }
+
+  /** Opens a pattern in the piano roll, e.g. when its clip is double-clicked. */
+  function openInPianoRoll(patternId: string) {
+    openPatternId = patternId
+    pianoRollOpen = true
+  }
+
+  function newTrack() {
+    edit(addTrack(song, createTrack(`Track ${song.tracks.length + 1}`)))
+  }
+
+  /** Makes an empty pattern (4 bars, or the whole song if shorter), selects it and opens it. */
+  function newPattern() {
+    const pattern = createPattern(`Pattern ${song.patterns.length + 1}`, Math.min(4, song.bars) * ticksPerBar(song))
+    edit(addPattern(song, pattern))
+    openInPianoRoll(pattern.id)
+  }
+
+  function onBarsChange(e: Event & { currentTarget: HTMLInputElement }) {
+    edit(setBars(song, Number(e.currentTarget.value)))
+    // If the length was refused (too short for the clips), show the real one again.
+    e.currentTarget.value = String(song.bars)
   }
 
   $effect(() => transport.subscribe(() => (playing = transport.isPlaying)))
@@ -156,6 +195,10 @@
     } else if (mod && e.key.toLowerCase() === 'o') {
       e.preventDefault()
       fileInput.click()
+    } else if (e.key === 'F5') {
+      // F5 and F7 are FL's keys for these windows. F5 would otherwise reload the page.
+      e.preventDefault()
+      playlistOpen = !playlistOpen
     } else if (e.key === 'F7') {
       e.preventDefault()
       pianoRollOpen = !pianoRollOpen
@@ -180,24 +223,20 @@
 
     <button
       class="file"
+      onclick={() => (playlistOpen = !playlistOpen)}
+      aria-pressed={playlistOpen}
+      title="Show or hide the playlist (F5)"
+    >
+      Playlist
+    </button>
+    <button
+      class="file"
       onclick={() => (pianoRollOpen = !pianoRollOpen)}
       aria-pressed={pianoRollOpen}
       title="Show or hide the piano roll (F7)"
     >
       Piano roll
     </button>
-    <label>
-      Pattern
-      <select
-        value={openPattern?.id}
-        onchange={(e) => (openPatternId = e.currentTarget.value)}
-        disabled={song.patterns.length === 0}
-      >
-        {#each song.patterns as pattern (pattern.id)}
-          <option value={pattern.id}>{pattern.name}</option>
-        {/each}
-      </select>
-    </label>
 
     <button class="play" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
       {playing ? '❚❚' : '▶'}
@@ -205,6 +244,10 @@
     <button onclick={() => transport.stop()} aria-label="Stop">■</button>
     <output class="position">{positionText}</output>
     <span class="bpm">{song.bpm} BPM</span>
+    <label title="Song length in bars">
+      Bars
+      <input class="bars" type="number" min="1" max="9999" value={song.bars} onchange={onBarsChange} />
+    </label>
 
     <button onclick={undo} disabled={!canUndo} aria-label="Undo" title="Undo (Ctrl/Cmd+Z)">↶</button>
     <button onclick={redo} disabled={!canRedo} aria-label="Redo" title="Redo (Ctrl/Cmd+Shift+Z)">↷</button>
@@ -223,10 +266,6 @@
       Volume
       <input type="range" min="0" max="1" step="0.01" bind:value={volume} />
     </label>
-    <label class="zoom">
-      Zoom
-      <input type="range" min="0.15" max="2" step="0.05" bind:value={zoom} />
-    </label>
     {#if fileError}
       <span class="error" role="alert">
         {fileError}
@@ -235,8 +274,56 @@
     {/if}
   </header>
 
+  <!-- A reusable piece of markup, like a small template. Both windows use it for their zoom slider. -->
+  {#snippet zoomSlider(label: string, range: ZoomRange, value: number, set: (z: number) => void)}
+    <label title="{label} (or Ctrl+mouse wheel)">
+      Zoom
+      <input
+        type="range"
+        aria-label={label}
+        min={range.min}
+        max={range.max}
+        step="0.005"
+        {value}
+        oninput={(e) => set(Number(e.currentTarget.value))}
+      />
+    </label>
+  {/snippet}
+
   <!-- The workspace: the area under the toolbar where windows float. -->
   <main class="workspace">
+    {#if playlistOpen}
+      <Window
+        title="Playlist"
+        bind:x={playlistRect.x}
+        bind:y={playlistRect.y}
+        bind:width={playlistRect.width}
+        bind:height={playlistRect.height}
+        minWidth={360}
+        minHeight={160}
+        onClose={() => (playlistOpen = false)}
+      >
+        <!-- A snippet named like a prop is passed as that prop: here, Window's `actions`. -->
+        {#snippet actions()}
+          {@render zoomSlider('Playlist zoom', PLAYLIST_ZOOM, playlistZoom, (z) => (playlistZoom = z))}
+        {/snippet}
+        <Playlist
+          {song}
+          {transport}
+          pxPerTick={playlistZoom}
+          {snap}
+          {follow}
+          selectedPatternId={openPattern?.id}
+          onEdit={edit}
+          onSelectPattern={(id) => (openPatternId = id)}
+          onOpenPattern={openInPianoRoll}
+          onNewPattern={newPattern}
+          onAddTrack={newTrack}
+          onZoom={(z) => (playlistZoom = z)}
+        />
+      </Window>
+    {/if}
+
     {#if pianoRollOpen}
       <Window
         title={openPattern ? `Piano roll – ${openPattern.name}` : 'Piano roll'}
@@ -248,8 +335,20 @@
         minHeight={180}
         onClose={() => (pianoRollOpen = false)}
       >
+        {#snippet actions()}
+          {@render zoomSlider('Piano roll zoom', PIANO_ROLL_ZOOM, pianoRollZoom, (z) => (pianoRollZoom = z))}
+        {/snippet}
         {#if openPattern}
-          <PianoRoll {song} pattern={openPattern} {transport} {viewport} {snap} {follow} onEdit={editPattern} />
+          <PianoRoll
+            {song}
+            pattern={openPattern}
+            {transport}
+            {viewport}
+            {snap}
+            {follow}
+            onEdit={editPattern}
+            onZoom={(z) => (pianoRollZoom = z)}
+          />
         {:else}
           <p class="empty">This song has no patterns.</p>
         {/if}
@@ -349,6 +448,15 @@
   .file[aria-pressed='true'] {
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  .bars {
+    width: 52px;
+    background: var(--button);
+    color: var(--text);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 3px 4px;
   }
 
   .empty {

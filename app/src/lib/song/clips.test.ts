@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addClip, clampClip, moveClip, removeClips, trimClipEnd, trimClipStart } from './clips'
+import { addClip, clampClip, clipAt, moveClip, removeClips, trimClipEnd, trimClipStart } from './clips'
 import { createClip, createPattern, createTrack, type Song } from './song'
 
 // A 4-bar song (1536 ticks) with a 1-bar pattern (384 ticks) on two tracks.
@@ -88,6 +88,22 @@ describe('trimClipStart', () => {
   it('stops before the clip vanishes', () => {
     const { song, clip, only } = setup()
     expect(only(trimClipStart(song, clip.id, 5000))).toMatchObject({ start: 767, offset: 383, length: 1 })
+  })
+})
+
+describe('clipAt', () => {
+  it('finds the clip under a tick on a track, with an exclusive end', () => {
+    const { song, clip, tracks } = setup()
+    expect(clipAt(song, 384, tracks[0].id)).toBe(clip)
+    expect(clipAt(song, 767, tracks[0].id)).toBe(clip)
+    expect(clipAt(song, 768, tracks[0].id)).toBeUndefined()
+    expect(clipAt(song, 500, tracks[1].id)).toBeUndefined()
+  })
+
+  it('picks the later clip where two overlap', () => {
+    const { song, pattern, tracks } = setup()
+    const next = addClip(song, createClip(pattern, tracks[0], 576))
+    expect(clipAt(next, 600, tracks[0].id)).toBe(next.clips[1])
   })
 })
 

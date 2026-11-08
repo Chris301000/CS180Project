@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AudioPlayer, notesStartingIn } from './player'
 import { RecordingBackend } from './recordingBackend'
 import { pitchToFrequency } from './backend'
+import { removeClips } from '../song/clips'
 import { removeNotes, replacePattern } from '../song/edits'
 import {
   DEFAULT_SYNTH,
@@ -218,6 +219,35 @@ describe('AudioPlayer', () => {
     player.update()
     advance(0.6)
     expect(times(backend)).toEqual([1.5])
+  })
+
+  it('jumps back with the playhead when the song gets shorter under it', () => {
+    // A 4-bar song with a 1-bar pattern at bar 1 and bar 3, so it loops every 3 bars.
+    const pattern = createPattern('P', 384, [note(0)])
+    const track = createTrack('T')
+    const far = createClip(pattern, track, 768)
+    const state = {
+      song: { ...TIMING, bars: 4, tracks: [track], patterns: [pattern], clips: [createClip(pattern, track, 0), far] } as Song,
+    }
+    const backend = new RecordingBackend()
+    const transport = new Transport(() => state.song, () => backend.now())
+    const player = new AudioPlayer(() => state.song, transport, backend)
+    players.push(player)
+    const advance = (seconds: number) => {
+      for (let i = 0; i < Math.round(seconds / 0.025); i++) {
+        backend.time += 0.025
+        player.update()
+      }
+    }
+    transport.play()
+    advance(4.2) // Inside the far clip, which starts at 4s.
+    const stops = backend.stops
+    state.song = removeClips(state.song, [far.id]) // Now it loops every bar.
+    advance(0.05)
+    expect(backend.stops).toBe(stops + 1)
+    // The first note plays again right away, where the playhead now is.
+    expect(backend.notes.at(-1)!.time).toBeCloseTo(4.225, 2)
+    expect(transport.position()).toBeLessThan(24)
   })
 
   it('stops listening once disposed', () => {
