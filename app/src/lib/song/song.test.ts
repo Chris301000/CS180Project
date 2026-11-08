@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { clampPitch, isBlackKey, pitchName, pitchToY, snapTick, tickToX, xToTick, yToPitch } from './coords'
-import { createDemoSong, formatPosition, secondsToTicks, songLengthTicks, ticksToSeconds } from './song'
+import {
+  createDemoSong,
+  formatPosition,
+  patternPosition,
+  secondsToTicks,
+  songFromNotes,
+  songLengthTicks,
+  ticksToSeconds,
+  type Song,
+} from './song'
 import { Transport } from './transport'
 
 const vp = { pxPerTick: 0.5, rowHeight: 10 }
@@ -52,11 +61,48 @@ describe('song', () => {
     expect(formatPosition(song.ppq * 5 + 7, song)).toBe('2:2:07')
   })
 
-  it('keeps demo notes inside the song', () => {
-    for (const note of song.notes) {
-      expect(note.start + note.duration).toBeLessThanOrEqual(songLengthTicks(song))
+  it('keeps demo notes inside their patterns and clips inside the song', () => {
+    for (const pattern of song.patterns) {
+      for (const note of pattern.notes) expect(note.start + note.duration).toBeLessThanOrEqual(pattern.length)
     }
-    expect(new Set(song.notes.map((n) => n.id)).size).toBe(song.notes.length)
+    for (const clip of song.clips) expect(clip.start + clip.length).toBeLessThanOrEqual(songLengthTicks(song))
+  })
+
+  it('gives every demo note, track, pattern and clip its own id', () => {
+    const ids = [
+      ...song.patterns.flatMap((p) => [p.id, ...p.notes.map((n) => n.id)]),
+      ...song.tracks.map((t) => t.id),
+      ...song.clips.map((c) => c.id),
+    ]
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('makes a one-track song covering the whole song from notes', () => {
+    const one = songFromNotes({ bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2 }, [])
+    expect(one.tracks).toHaveLength(1)
+    expect(one.patterns[0].length).toBe(768)
+    expect(one.clips[0]).toMatchObject({ start: 0, offset: 0, length: 768 })
+  })
+})
+
+describe('patternPosition', () => {
+  // One pattern, placed twice: untrimmed at bar 1, and at bar 3 with its first 100 ticks trimmed off.
+  const base = songFromNotes({ bpm: 120, ppq: 96, beatsPerBar: 4, bars: 4 }, [])
+  const pattern = { ...base.patterns[0], length: 384 }
+  const first = { ...base.clips[0], length: 384 }
+  const second = { ...first, id: 'second', start: 768, offset: 100, length: 284 }
+  const song: Song = { ...base, patterns: [pattern], clips: [first, second] }
+
+  it('maps a song position inside a clip to the pattern', () => {
+    expect(patternPosition(song, pattern.id, 50)).toBe(50)
+    expect(patternPosition(song, pattern.id, 768)).toBe(100)
+    expect(patternPosition(song, pattern.id, 800)).toBe(132)
+  })
+
+  it('is null outside every clip of the pattern', () => {
+    expect(patternPosition(song, pattern.id, 500)).toBeNull()
+    expect(patternPosition(song, pattern.id, 768 + 284)).toBeNull()
+    expect(patternPosition(song, 'other', 50)).toBeNull()
   })
 })
 

@@ -13,22 +13,25 @@
     type Viewport,
   } from '../song/coords'
   import { MIN_DURATION, addNote, noteAt, removeNotes, updateNote } from '../song/edits'
-  import { createNote, songLengthTicks, ticksPerBar, type Note, type Song } from '../song/song'
+  import { createNote, patternPosition, ticksPerBar, type Note, type Pattern, type Song } from '../song/song'
   import type { Transport } from '../song/transport'
 
   interface Props {
+    /** The whole song: used for its timing, and to find where this pattern is playing. */
     song: Song
+    /** The pattern being edited. */
+    pattern: Pattern
     transport: Transport
     viewport: Viewport
     /** Snap size in ticks; 0 turns snapping off. Holding Alt also turns it off. */
     snap: number
-    /** Called once per finished edit (e.g. on mouse up, not on every move). */
-    onEdit: (next: Song) => void
+    /** Called with the edited pattern once per finished edit (e.g. on mouse up, not on every move). */
+    onEdit: (next: Pattern) => void
     /** Scroll horizontally to keep the playhead in view while playing. */
     follow?: boolean
   }
 
-  let { song, transport, viewport, snap, onEdit, follow = true }: Props = $props()
+  let { song, pattern, transport, viewport, snap, onEdit, follow = true }: Props = $props()
 
   const KEYS_WIDTH = 64
   const RULER_HEIGHT = 24
@@ -38,15 +41,15 @@
   const RESIZE_HANDLE_PX = 6
 
   type Drag =
-    | { mode: 'move'; base: Song; note: Note; originTick: number; originPitch: number }
-    | { mode: 'resize'; base: Song; note: Note; originTick: number }
+    | { mode: 'move'; base: Pattern; note: Note; originTick: number; originPitch: number }
+    | { mode: 'resize'; base: Pattern; note: Note; originTick: number }
     | { mode: 'erase' }
 
-  // While dragging, `preview` holds the edited song and is drawn instead of
-  // `song`; it's handed to onEdit on mouse up so one drag is one undo step.
+  // While dragging, `preview` holds the edited pattern and is drawn instead of
+  // `pattern`; it's handed to onEdit on mouse up so one drag is one undo step.
   let drag: Drag | null = null
-  let preview = $state.raw<Song | null>(null)
-  const shown = $derived(preview ?? song)
+  let preview = $state.raw<Pattern | null>(null)
+  const shown = $derived(preview ?? pattern)
 
   let selectedId = $state<string | null>(null)
   /** Length of new notes: the last note clicked or resized, like FL. */
@@ -62,12 +65,12 @@
   let gridPlayhead: HTMLDivElement
   let rulerPlayhead: HTMLDivElement
 
-  const gridWidth = $derived(tickToX(songLengthTicks(song), viewport))
+  const gridWidth = $derived(tickToX(pattern.length, viewport))
   const gridHeight = $derived(PITCH_COUNT * viewport.rowHeight)
   const barPx = $derived(tickToX(ticksPerBar(song), viewport))
   const beatPx = $derived(tickToX(song.ppq, viewport))
   const stepPx = $derived(tickToX(song.ppq * STEP_BEATS, viewport))
-  const barNumbers = $derived(Array.from({ length: song.bars }, (_, i) => i))
+  const barNumbers = $derived(Array.from({ length: Math.ceil(pattern.length / ticksPerBar(song)) }, (_, i) => i))
 
   onMount(() => {
     // Start scrolled to around C6 so the middle of the keyboard is visible.
@@ -76,15 +79,19 @@
 
   // The playhead moves every frame, so it's positioned directly instead of
   // through reactive state; otherwise every frame would make Svelte re-check the whole roll.
+  // It's only shown while a clip of this pattern is playing.
   $effect(() => {
     let raf = 0
     const frame = () => {
-      const x = tickToX(transport.position(), viewport)
+      raf = requestAnimationFrame(frame)
+      const tick = patternPosition(song, pattern.id, transport.position())
+      gridPlayhead.style.display = rulerPlayhead.style.display = tick === null ? 'none' : ''
+      if (tick === null) return
+      const x = tickToX(tick, viewport)
       const transform = `translateX(${x}px)`
       gridPlayhead.style.transform = transform
       rulerPlayhead.style.transform = transform
       if (follow && transport.isPlaying) keepInView(x)
-      raf = requestAnimationFrame(frame)
     }
     raf = requestAnimationFrame(frame)
     return () => cancelAnimationFrame(raf)
@@ -97,10 +104,15 @@
     if (x < left || x > left + visible) scroller.scrollLeft = x
   }
 
-  // Clicking or dragging on the ruler moves the playhead.
+  // Clicking or dragging on the ruler moves the playhead to that point of the
+  // pattern, in the first clip that shows it. If no clip shows it, it does nothing.
   function seekFromPointer(e: PointerEvent) {
     const x = e.clientX - ruler.getBoundingClientRect().left
-    transport.seek(xToTick(Math.max(0, x), viewport))
+    const tick = xToTick(Math.max(0, x), viewport)
+    const clip = song.clips
+      .filter((c) => c.patternId === pattern.id && tick >= c.offset && tick < c.offset + c.length)
+      .sort((a, b) => a.start - b.start)[0]
+    if (clip) transport.seek(clip.start + tick - clip.offset)
   }
 
   function onRulerDown(e: PointerEvent) {
@@ -148,18 +160,18 @@
     if (hit) {
       selectedId = hit.note.id
       lastDuration = hit.note.duration
-      preview = song
+      preview = pattern
       drag = hit.onEdge
-        ? { mode: 'resize', base: song, note: hit.note, originTick: tick }
-        : { mode: 'move', base: song, note: hit.note, originTick: tick, originPitch: pitch }
+        ? { mode: 'resize', base: pattern, note: hit.note, originTick: tick }
+        : { mode: 'move', base: pattern, note: hit.note, originTick: tick, originPitch: pitch }
       return
     }
 
     // Empty space: add a note, then let the same drag move it.
     const start = snapTick(tick, snapFor(e))
-    if (start >= songLengthTicks(song)) return
+    if (start >= pattern.length) return
     const created = createNote({ pitch, start, duration: lastDuration ?? (snap || song.ppq) })
-    const base = addNote(song, created)
+    const base = addNote(pattern, created)
     const note = base.notes[base.notes.length - 1]
     selectedId = note.id
     preview = base
@@ -187,7 +199,7 @@
     } else {
       const step = snapFor(e)
       const end = snapTick(drag.note.start + drag.note.duration + tick - drag.originTick, step, 'round')
-      const maxDuration = songLengthTicks(song) - drag.note.start
+      const maxDuration = pattern.length - drag.note.start
       const duration = Math.min(maxDuration, Math.max(step || MIN_DURATION, end - drag.note.start))
       preview = updateNote(drag.base, drag.note.id, { duration })
       lastDuration = duration
@@ -196,7 +208,7 @@
 
   function onGridUp() {
     if (!drag) return
-    if (preview && preview !== song) onEdit(preview)
+    if (preview && preview !== pattern) onEdit(preview)
     drag = null
     preview = null
   }
@@ -217,7 +229,7 @@
     if (e.target instanceof HTMLElement && e.target.closest('input, select, textarea')) return
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
       e.preventDefault()
-      onEdit(removeNotes(song, [selectedId]))
+      onEdit(removeNotes(pattern, [selectedId]))
       selectedId = null
     } else if (e.key === 'Escape') {
       selectedId = null

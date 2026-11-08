@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.svelte'
 import { RecordingBackend } from './lib/audio/recordingBackend'
 import { serializeSong } from './lib/song/songFile'
-import { createDemoSong } from './lib/song/song'
+import { createDemoSong, songFromNotes } from './lib/song/song'
 
 const key = (init: KeyboardEventInit) => window.dispatchEvent(new KeyboardEvent('keydown', init))
 
@@ -101,7 +101,7 @@ describe('opening song files', () => {
     const { notes, openFile, getByLabelText } = setup()
     const start = notes()
     const song = createDemoSong()
-    await openFile(serializeSong({ ...song, notes: song.notes.slice(0, 2) }))
+    await openFile(serializeSong(songFromNotes(song, song.patterns[0].notes.slice(0, 2))))
     await waitFor(() => expect(notes()).toBe(2))
     ;(getByLabelText('Undo') as HTMLButtonElement).click()
     await tick()

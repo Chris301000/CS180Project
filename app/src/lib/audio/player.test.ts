@@ -2,14 +2,23 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { AudioPlayer, notesStartingIn } from './player'
 import { RecordingBackend } from './recordingBackend'
 import { pitchToFrequency } from './backend'
-import { removeNotes } from '../song/edits'
-import { DEFAULT_SYNTH, createNote, type Note, type Song } from '../song/song'
+import { removeNotes, replacePattern } from '../song/edits'
+import {
+  DEFAULT_SYNTH,
+  createClip,
+  createNote,
+  createPattern,
+  createTrack,
+  songFromNotes,
+  type Note,
+  type Song,
+  type SynthSettings,
+} from '../song/song'
 import { Transport } from '../song/transport'
 
 // 120 BPM at 96 ppq: one beat is 96 ticks or 0.5s. The song is 1 bar, 2 seconds.
-function makeSong(notes: Note[]): Song {
-  return { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 1, notes, synth: DEFAULT_SYNTH }
-}
+const TIMING = { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 1 }
+const makeSong = (notes: Note[]): Song => songFromNotes(TIMING, notes)
 
 const players: AudioPlayer[] = []
 
@@ -44,6 +53,51 @@ describe('notesStartingIn', () => {
     const song = makeSong([note(0), note(48), note(96)])
     expect(notesStartingIn(song, 48, 96).map((n) => n.start)).toEqual([48])
   })
+
+  // A 4-bar song with one 1-bar pattern, a note on each beat, placed by the clips given.
+  function placed(...clips: { start: number; offset?: number; length?: number }[]): Song {
+    const pattern = createPattern('P', 384, [0, 96, 192, 288].map((start) => note(start)))
+    const track = createTrack('T')
+    return {
+      ...TIMING,
+      bars: 4,
+      tracks: [track],
+      patterns: [pattern],
+      clips: clips.map((c) => ({ ...createClip(pattern, track, c.start), ...c })),
+    }
+  }
+  const starts = (song: Song) => notesStartingIn(song, 0, 1536).map((n) => n.start)
+
+  it("moves a clip's notes to where the clip starts in the song", () => {
+    expect(starts(placed({ start: 384 }))).toEqual([384, 480, 576, 672])
+  })
+
+  it('plays a pattern placed twice in both places', () => {
+    expect(starts(placed({ start: 0 }, { start: 768 }))).toEqual([0, 96, 192, 288, 768, 864, 960, 1056])
+  })
+
+  it('skips notes trimmed off the left, keeping the rest where they were', () => {
+    // Trimmed by 100 ticks: the clip's left edge is at 484, and the note at pattern tick 96 is gone.
+    expect(starts(placed({ start: 484, offset: 100, length: 284 }))).toEqual([576, 672])
+  })
+
+  it('skips notes trimmed off the right and cuts short the one crossing the end', () => {
+    const notes = notesStartingIn(placed({ start: 0, length: 120 }), 0, 1536)
+    expect(notes.map((n) => [n.start, n.duration])).toEqual([[0, 48], [96, 24]])
+  })
+
+  it("plays each note with its own track's synth", () => {
+    const bass: SynthSettings = { wave: 'square', attack: 0, release: 0 }
+    const pattern = createPattern('P', 384, [note(0)])
+    const tracks = [createTrack('Lead'), createTrack('Bass', bass)]
+    const song: Song = {
+      ...TIMING,
+      tracks,
+      patterns: [pattern],
+      clips: [createClip(pattern, tracks[0], 0), createClip(pattern, tracks[1], 0)],
+    }
+    expect(notesStartingIn(song, 0, 384).map((n) => n.synth)).toEqual([DEFAULT_SYNTH, bass])
+  })
 })
 
 describe('pitchToFrequency', () => {
@@ -71,7 +125,7 @@ describe('AudioPlayer', () => {
     expect(backend.now()).toBeLessThan(10.5)
   })
 
-  it('sends the note details and song synth to the backend', () => {
+  it('sends the note details and track synth to the backend', () => {
     const { backend, transport } = setup([createNote({ pitch: 72, start: 0, duration: 96, velocity: 0.5 })])
     transport.play()
     expect(backend.notes[0]).toMatchObject({ pitch: 72, duration: 0.5, velocity: 0.5, synth: DEFAULT_SYNTH })
@@ -151,7 +205,8 @@ describe('AudioPlayer', () => {
   it('picks up edits made during playback', () => {
     const { state, backend, transport, advance } = setup([note(192), note(288)])
     transport.play()
-    state.song = removeNotes(state.song, [state.song.notes[1].id])
+    const pattern = state.song.patterns[0]
+    state.song = replacePattern(state.song, removeNotes(pattern, [pattern.notes[1].id]))
     advance(1.8)
     expect(times(backend)).toEqual([1])
   })

@@ -3,7 +3,8 @@
   import Window from './lib/ui/Window.svelte'
   import type { AudioBackend } from './lib/audio/backend'
   import { AudioPlayer } from './lib/audio/player'
-  import { createDemoSong, formatPosition, type Song } from './lib/song/song'
+  import { createDemoSong, findPattern, formatPosition, type Pattern, type Song } from './lib/song/song'
+  import { replacePattern } from './lib/song/edits'
   import { Transport } from './lib/song/transport'
   import { History } from './lib/song/history'
   import type { Viewport } from './lib/song/coords'
@@ -100,6 +101,16 @@
   let pianoRollOpen = $state(true)
   const pianoRollRect = $state({ x: 16, y: 16, width: 960, height: 540 })
 
+  // Which pattern the piano roll is editing. Opening a file or undoing past it
+  // can leave this pointing at a pattern that no longer exists, so fall back
+  // to the first one.
+  let openPatternId = $state(history.current.patterns[0]?.id ?? '')
+  const openPattern = $derived(findPattern(song, openPatternId) ?? song.patterns[0])
+
+  function editPattern(next: Pattern) {
+    edit(replacePattern(song, next))
+  }
+
   $effect(() => transport.subscribe(() => (playing = transport.isPlaying)))
   $effect(() => {
     transport.loop = loop
@@ -175,6 +186,18 @@
     >
       Piano roll
     </button>
+    <label>
+      Pattern
+      <select
+        value={openPattern?.id}
+        onchange={(e) => (openPatternId = e.currentTarget.value)}
+        disabled={song.patterns.length === 0}
+      >
+        {#each song.patterns as pattern (pattern.id)}
+          <option value={pattern.id}>{pattern.name}</option>
+        {/each}
+      </select>
+    </label>
 
     <button class="play" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
       {playing ? '❚❚' : '▶'}
@@ -216,7 +239,7 @@
   <main class="workspace">
     {#if pianoRollOpen}
       <Window
-        title="Piano roll"
+        title={openPattern ? `Piano roll – ${openPattern.name}` : 'Piano roll'}
         bind:x={pianoRollRect.x}
         bind:y={pianoRollRect.y}
         bind:width={pianoRollRect.width}
@@ -225,7 +248,11 @@
         minHeight={180}
         onClose={() => (pianoRollOpen = false)}
       >
-        <PianoRoll {song} {transport} {viewport} {snap} {follow} onEdit={edit} />
+        {#if openPattern}
+          <PianoRoll {song} pattern={openPattern} {transport} {viewport} {snap} {follow} onEdit={editPattern} />
+        {:else}
+          <p class="empty">This song has no patterns.</p>
+        {/if}
       </Window>
     {/if}
   </main>
@@ -322,6 +349,12 @@
   .file[aria-pressed='true'] {
     border-color: var(--accent);
     color: var(--accent);
+  }
+
+  .empty {
+    margin: 0;
+    padding: 16px;
+    color: var(--text-dim);
   }
 
   /* position: relative makes this the box windows are positioned in. */
