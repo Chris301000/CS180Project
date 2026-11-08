@@ -8,8 +8,9 @@
 // A new instrument adds its engine to ENGINES here (and its settings in
 // instruments/definitions.ts).
 
-import { pitchToFrequency, type ScheduledNote } from './backend'
+import { pitchToFrequency, type PluginHandle, type ScheduledNote } from './backend'
 import type { BasicSynth, FmSynth, Instrument, InstrumentOf, InstrumentType } from '../instruments/definitions'
+import { createWamEngine } from './wamEngine'
 
 /** A note as an engine gets it: the channel has already been picked. */
 export type EngineNote = Omit<ScheduledNote, 'channelId'>
@@ -23,6 +24,8 @@ export interface InstrumentEngine {
   stopAll(time: number): void
   /** Silences everything and releases its resources. The engine isn't used again. */
   dispose(): void
+  /** For plugins: the handle editors use to show the plugin's own interface. */
+  plugin?: PluginHandle
 }
 
 /** Builds the engine for an instrument, sending its sound into `output`. */
@@ -139,6 +142,7 @@ function voiceEngine<T extends Instrument>(build: VoiceBuilder<T>): EngineFactor
 export const ENGINES: { [K in InstrumentType]: EngineFactory<InstrumentOf<K>> } = {
   basic: voiceEngine(basicVoice),
   fm: voiceEngine(fmVoice),
+  wam: (context, output, plugin) => createWamEngine(context, output, plugin),
 }
 
 /** Builds the engine for an instrument of any type. */

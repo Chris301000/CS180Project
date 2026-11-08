@@ -51,6 +51,35 @@ export interface AudioBackend {
   stopAll(): void
   /** Sets overall volume, 0–1. */
   setMasterGain(gain: number): void
+  /**
+   * The live plugin playing a channel, for instruments that draw their own
+   * interface. Undefined if the channel's instrument isn't a plugin, or audio
+   * hasn't started yet (channels are only built once it has).
+   */
+  getPlugin(channelId: string): PluginHandle | undefined
+  /** Called when channels are built, replaced or removed, so look-ups with getPlugin can be redone. */
+  onChannelsChange(listener: () => void): () => void
+}
+
+export type PluginStatus = 'loading' | 'ready' | 'failed' | 'blocked'
+
+/**
+ * A plugin instance, as the app's editors see it: enough to show its own
+ * interface and to read its settings, without exposing Web Audio.
+ */
+export interface PluginHandle {
+  /** 'blocked' means it's not on the approved list, so it was never loaded. */
+  readonly status: PluginStatus
+  /** Why it failed or was blocked, to show the user. */
+  readonly error: string | null
+  /** Called whenever `status` changes. Returns a function that stops listening. */
+  onStatusChange(listener: () => void): () => void
+  /** The plugin's own interface, as an element to put on the page. Only once it's 'ready'. */
+  createGui(): Promise<Element>
+  /** Cleans up an element from createGui before it's removed. */
+  destroyGui(gui: Element): void
+  /** The plugin's current settings, to save in the song. Only once it's 'ready'. */
+  getState(): Promise<unknown>
 }
 
 /**

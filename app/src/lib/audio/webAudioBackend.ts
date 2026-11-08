@@ -1,5 +1,6 @@
 import { volumeToGain, type AudioBackend, type ChannelSetup, type ScheduledNote } from './backend'
 import { createEngine, type InstrumentEngine } from './voices'
+import { sameEngine } from '../instruments/definitions'
 
 /** How long a volume change takes to settle, in seconds. Short, but long enough not to click. */
 const VOLUME_SMOOTHING = 0.01
@@ -19,6 +20,7 @@ export class WebAudioBackend implements AudioBackend {
   private channels = new Map<string, Channel>()
   /** The latest setChannels, kept so channels can be built once the context exists. */
   private wanted: ChannelSetup[] = []
+  private channelListeners = new Set<() => void>()
 
   now() {
     return this.context?.currentTime ?? 0
@@ -40,9 +42,14 @@ export class WebAudioBackend implements AudioBackend {
     const { context, master } = this
     if (!context || !master) return
 
+    // Whether any channel's engine was created, replaced or removed, so views showing a plugin look again.
+    let enginesChanged = false
     const ids = new Set(channels.map((c) => c.id))
     for (const [id, channel] of this.channels) {
-      if (!ids.has(id)) this.removeChannel(id, channel)
+      if (!ids.has(id)) {
+        this.removeChannel(id, channel)
+        enginesChanged = true
+      }
     }
 
     for (const setup of channels) {
@@ -52,6 +59,7 @@ export class WebAudioBackend implements AudioBackend {
         gain.gain.value = volumeToGain(setup.volume)
         gain.connect(master)
         this.channels.set(setup.id, { setup, gain, engine: createEngine(context, gain, setup.instrument) })
+        enginesChanged = true
         continue
       }
       if (setup.volume !== channel.setup.volume) {
@@ -60,16 +68,28 @@ export class WebAudioBackend implements AudioBackend {
       }
       // Instruments are replaced, never changed in place, so a new object means new settings.
       if (setup.instrument !== channel.setup.instrument) {
-        if (setup.instrument.type === channel.setup.instrument.type) {
+        if (sameEngine(setup.instrument, channel.setup.instrument)) {
           channel.engine.update(setup.instrument)
         } else {
-          // A different kind of instrument: swap in a new engine, like loading another plugin.
+          // A different kind of instrument (or another plugin): swap in a new engine.
           channel.engine.dispose()
           channel.engine = createEngine(context, channel.gain, setup.instrument)
+          enginesChanged = true
         }
       }
       channel.setup = setup
     }
+
+    if (enginesChanged) for (const listener of this.channelListeners) listener()
+  }
+
+  getPlugin(channelId: string) {
+    return this.channels.get(channelId)?.engine.plugin
+  }
+
+  onChannelsChange(listener: () => void) {
+    this.channelListeners.add(listener)
+    return () => this.channelListeners.delete(listener)
   }
 
   playNote({ channelId, ...note }: ScheduledNote) {

@@ -4,7 +4,11 @@
 //
 //   - here: its settings, defaults, and the range of each setting
 //   - editors.ts: the component that draws its controls (its "interface")
-//   - audio/voices.ts: the code that makes its sound
+//   - audio/voices.ts (or audio/wamEngine.ts): the code that makes its sound
+//
+// There are two kinds. Built-in synths have settings this app understands,
+// described in INSTRUMENTS. WAM plugins are other people's synths loaded from
+// a URL; their settings are an opaque blob only the plugin understands.
 //
 // Adding an instrument means adding it to the `Instrument` union and to all
 // three; TypeScript points out any place that's missing.
@@ -36,7 +40,27 @@ export interface FmSynth {
   release: number
 }
 
-export type Instrument = BasicSynth | FmSynth
+/**
+ * A Web Audio Module plugin: a synth someone else made, loaded from `url`.
+ * Only plugins on the approved list (WAM_PLUGINS) are ever loaded, since a
+ * plugin is code that runs inside the app.
+ */
+export interface WamPlugin {
+  type: 'wam'
+  /** The plugin's JavaScript module. */
+  url: string
+  /** Its name, to show before it loads (or if it can't). */
+  name: string
+  /**
+   * The plugin's own saved settings, from its getState(), or null for its
+   * defaults. Only the plugin understands it; the app just keeps it.
+   */
+  state: unknown
+}
+
+export type BuiltinInstrument = BasicSynth | FmSynth
+export type BuiltinType = BuiltinInstrument['type']
+export type Instrument = BuiltinInstrument | WamPlugin
 export type InstrumentType = Instrument['type']
 /** The instrument with type `K`, e.g. `InstrumentOf<'fm'>` is `FmSynth`. */
 export type InstrumentOf<K extends InstrumentType> = Extract<Instrument, { type: K }>
@@ -60,7 +84,7 @@ export interface ChoiceParam {
 /** A description of every setting of instrument `T` (all its fields except `type`). */
 type ParamSpecs<T> = { [K in Exclude<keyof T, 'type'>]: T[K] extends number ? NumberParam : ChoiceParam }
 
-interface Definition<T extends Instrument> {
+interface Definition<T extends BuiltinInstrument> {
   name: string
   defaults: Omit<T, 'type'>
   params: ParamSpecs<T>
@@ -69,7 +93,8 @@ interface Definition<T extends Instrument> {
 const attack: NumberParam = { kind: 'number', label: 'Attack', min: 0, max: 2, unit: 's', curve: 'squared' }
 const release: NumberParam = { kind: 'number', label: 'Release', min: 0, max: 5, unit: 's', curve: 'squared' }
 
-export const INSTRUMENTS: { [K in InstrumentType]: Definition<InstrumentOf<K>> } = {
+/** The built-in synths: their names, defaults and settings. */
+export const INSTRUMENTS: { [K in BuiltinType]: Definition<InstrumentOf<K>> } = {
   basic: {
     name: 'Simple synth',
     defaults: { wave: 'sawtooth', attack: 0.01, release: 0.05 },
@@ -87,11 +112,52 @@ export const INSTRUMENTS: { [K in InstrumentType]: Definition<InstrumentOf<K>> }
   },
 }
 
-export const INSTRUMENT_TYPES = Object.keys(INSTRUMENTS) as InstrumentType[]
+export const BUILTIN_TYPES = Object.keys(INSTRUMENTS) as BuiltinType[]
 
-/** A new instrument of the given type with its default settings. */
-export function createInstrument<K extends InstrumentType>(type: K): InstrumentOf<K> {
+/** A new built-in synth of the given type with its default settings. */
+export function createInstrument<K extends BuiltinType>(type: K): InstrumentOf<K> {
   return { type, ...INSTRUMENTS[type].defaults } as InstrumentOf<K>
+}
+
+/**
+ * The approved WAM plugins: the only ones the app will load. Each runs its
+ * own code inside the app, so a song file naming any other URL keeps it but
+ * doesn't load it.
+ */
+export const WAM_PLUGINS: readonly { name: string; url: string }[] = [
+  { name: 'Synth-101', url: 'https://www.webaudiomodules.com/community/plugins/burns-audio/synth101/index.js' },
+]
+
+export const isApprovedPlugin = (url: string) => WAM_PLUGINS.some((p) => p.url === url)
+
+/** A plugin instrument at the plugin's own defaults. */
+export const createWamInstrument = (plugin: { name: string; url: string }): WamPlugin => ({
+  type: 'wam',
+  url: plugin.url,
+  name: plugin.name,
+  state: null,
+})
+
+/**
+ * Whether two instruments can be played by the same engine, so a change
+ * between them is just new settings. A different type, or a different
+ * plugin, needs a new engine (like loading another plugin in FL).
+ */
+export function sameEngine(a: Instrument, b: Instrument): boolean {
+  if (a.type !== b.type) return false
+  return a.type !== 'wam' || a.url === (b as WamPlugin).url
+}
+
+/**
+ * Whether two plugin states are the same, allowing for rounding: plugins
+ * often keep settings as 32-bit floats, so 0.2 comes back as 0.20000000298.
+ */
+export function sameState(a: unknown, b: unknown): boolean {
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(a))
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return a === b
+  if (Array.isArray(a) !== Array.isArray(b)) return false
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  return [...keys].every((k) => sameState((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
 }
 
 export const DEFAULT_INSTRUMENT: Instrument = createInstrument('basic')

@@ -415,6 +415,8 @@
         {#if openPattern}
           <InstrumentPanel
             instrument={openPattern.instrument}
+            channelId={openPattern.id}
+            audio={backend}
             volume={openPattern.volume}
             onInput={(instrument) => previewSound({ instrument })}
             onChange={(instrument) => changeSound({ instrument })}

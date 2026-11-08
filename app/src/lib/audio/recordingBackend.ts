@@ -32,6 +32,14 @@ export class RecordingBackend implements AudioBackend {
     this.stops++
   }
 
+  getPlugin() {
+    return undefined
+  }
+
+  onChannelsChange() {
+    return () => {}
+  }
+
   setMasterGain(gain: number) {
     this.gain = gain
   }
