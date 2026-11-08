@@ -1,0 +1,186 @@
+<script lang="ts">
+  // The editor for a WAM plugin: the plugin's own interface, inside the
+  // Instrument window.
+  //
+  // The plugin changes its settings itself when you use its interface, and
+  // doesn't tell anyone. So after each interaction (a click, drag, key or
+  // scroll inside it) this waits a moment, reads the plugin's settings, and if
+  // they changed, records them on the pattern as one undo step. Undo then puts
+  // older settings back through the audio engine (see wamEngine.ts).
+
+  import type { PluginHandle, PluginStatus } from '../audio/backend'
+  import { sameState, type WamPlugin } from './definitions'
+  import type { EditorProps } from './editors'
+
+  let { instrument, onChange, channelId, audio, onPreferredSize }: EditorProps<WamPlugin> = $props()
+
+  /** How long after the last interaction to read the plugin's settings. */
+  const SETTLE_MS = 300
+  /** The padding around the editor (see `.wam` below), added to the interface's size when reporting it. */
+  const PADDING = 8
+
+  let plugin = $state.raw<PluginHandle | undefined>()
+  /** 'stopped' means audio hasn't started, so the plugin doesn't exist yet. */
+  let status = $state<PluginStatus | 'stopped'>('stopped')
+  let error = $state<string | null>(null)
+  let guiHost: HTMLDivElement
+
+  // Find this channel's plugin, and look again whenever channels are rebuilt
+  // (audio starting, or the plugin being swapped for another).
+  $effect(() => {
+    const id = channelId
+    const look = () => (plugin = audio.getPlugin(id))
+    look()
+    return audio.onChannelsChange(look)
+  })
+
+  // Follow its loading status.
+  $effect(() => {
+    const p = plugin
+    if (!p) {
+      status = 'stopped'
+      return
+    }
+    const read = () => {
+      status = p.status
+      error = p.error
+    }
+    read()
+    return p.onStatusChange(read)
+  })
+
+  // Once it's ready, put its interface on the page; take it off again when
+  // this editor closes or the plugin changes.
+  $effect(() => {
+    const p = plugin
+    if (!p || status !== 'ready') return
+    let gui: Element | null = null
+    let cancelled = false
+    let observer: ResizeObserver | undefined
+    void p.createGui().then((element) => {
+      if (cancelled) return p.destroyGui(element)
+      gui = element
+      guiHost.appendChild(element)
+      observer = reportSizeOnce(element as HTMLElement)
+    })
+    return () => {
+      cancelled = true
+      observer?.disconnect()
+      if (gui) {
+        p.destroyGui(gui)
+        gui.remove()
+      }
+    }
+  })
+
+  /**
+   * Reports the interface's size once it has one, so the window can fit it
+   * when the plugin loads. Only once: after that the window is the user's to
+   * resize. Plugins may draw their interface a moment after it's added, so
+   * this waits for the first non-zero size.
+   */
+  function reportSizeOnce(element: HTMLElement): ResizeObserver | undefined {
+    const report = () => {
+      const width = element.offsetWidth
+      const height = element.offsetHeight
+      if (width === 0 || height === 0) return false
+      onPreferredSize?.({ width: width + PADDING * 2, height: height + PADDING * 2 })
+      return true
+    }
+    if (report() || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(() => {
+      if (report()) observer.disconnect()
+    })
+    observer.observe(element)
+    return observer
+  }
+
+  let settleTimer: ReturnType<typeof setTimeout> | undefined
+  /**
+   * Set when a press starts inside the plugin. Its knobs keep following the
+   * mouse when it leaves them and finish on release anywhere, so the release
+   * is watched on the whole window, not only inside the plugin.
+   */
+  let pressedInside = false
+
+  function onWindowPointerUp() {
+    if (!pressedInside) return
+    pressedInside = false
+    onInteraction()
+  }
+
+  function onInteraction() {
+    clearTimeout(settleTimer)
+    settleTimer = setTimeout(capture, SETTLE_MS)
+  }
+
+  async function capture() {
+    const p = plugin
+    if (!p || p.status !== 'ready') return
+    const state = await p.getState()
+    if (!sameState(state, instrument.state)) onChange({ ...instrument, state })
+  }
+
+  $effect(() => () => clearTimeout(settleTimer))
+</script>
+
+<svelte:window onpointerup={onWindowPointerUp} onpointercancel={onWindowPointerUp} />
+
+<div class="wam">
+  {#if status === 'stopped'}
+    <p>
+      Audio isn't running yet.
+      <button onclick={() => audio.start()}>Start audio</button>
+      to load {instrument.name}.
+    </p>
+  {:else if status === 'loading'}
+    <p>Loading {instrument.name}…</p>
+  {:else if status === 'failed' || status === 'blocked'}
+    <p class="error">{error}</p>
+    <p>Its saved settings are kept, so saving the song won't lose them.</p>
+  {/if}
+
+  <!-- These listeners hear events bubbling up from the plugin's own controls
+       inside, which are interactive; the box itself isn't. -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <div
+    class="gui"
+    role="application"
+    aria-label="{instrument.name} controls"
+    bind:this={guiHost}
+    hidden={status !== 'ready'}
+    onpointerdown={() => (pressedInside = true)}
+    onkeyup={onInteraction}
+    onchange={onInteraction}
+    onwheel={onInteraction}
+  ></div>
+</div>
+
+<style>
+  .wam {
+    /* Keep in step with PADDING above. */
+    padding: 8px;
+  }
+
+  p {
+    margin: 4px 2px;
+    color: var(--text-dim);
+  }
+
+  .error {
+    color: #ff7a7a;
+  }
+
+  button {
+    padding: 2px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--button);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .gui {
+    width: max-content;
+  }
+</style>

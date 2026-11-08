@@ -1,12 +1,26 @@
-import type { AudioBackend, ScheduledNote } from './backend'
-import { startVoice, type Voice } from './voices'
+import { volumeToGain, type AudioBackend, type ChannelSetup, type ScheduledNote } from './backend'
+import { createEngine, type InstrumentEngine } from './voices'
+import { sameEngine } from '../instruments/definitions'
+
+/** How long a volume change takes to settle, in seconds. Short, but long enough not to click. */
+const VOLUME_SMOOTHING = 0.01
+
+/** A channel's live parts: its instrument's engine, feeding its own volume node into the master. */
+interface Channel {
+  setup: ChannelSetup
+  gain: GainNode
+  engine: InstrumentEngine
+}
 
 export class WebAudioBackend implements AudioBackend {
   // Created on first start(), because browsers object to one made without a user gesture.
   private context: AudioContext | null = null
   private master: GainNode | null = null
   private masterGain = 1
-  private voices = new Set<Voice>()
+  private channels = new Map<string, Channel>()
+  /** The latest setChannels, kept so channels can be built once the context exists. */
+  private wanted: ChannelSetup[] = []
+  private channelListeners = new Set<() => void>()
 
   now() {
     return this.context?.currentTime ?? 0
@@ -18,27 +32,86 @@ export class WebAudioBackend implements AudioBackend {
       this.master = this.context.createGain()
       this.master.gain.value = this.masterGain
       this.master.connect(this.context.destination)
+      this.setChannels(this.wanted)
     }
     await this.context.resume()
   }
 
-  /** Each instrument type builds its own sound (see voices.ts). */
-  playNote(note: ScheduledNote) {
+  setChannels(channels: ChannelSetup[]) {
+    this.wanted = channels
     const { context, master } = this
     if (!context || !master) return
-    const voice = startVoice(context, master, note)
-    this.voices.add(voice)
-    voice.onEnded = () => this.voices.delete(voice)
+
+    // Whether any channel's engine was created, replaced or removed, so views showing a plugin look again.
+    let enginesChanged = false
+    const ids = new Set(channels.map((c) => c.id))
+    for (const [id, channel] of this.channels) {
+      if (!ids.has(id)) {
+        this.removeChannel(id, channel)
+        enginesChanged = true
+      }
+    }
+
+    for (const setup of channels) {
+      const channel = this.channels.get(setup.id)
+      if (!channel) {
+        const gain = context.createGain()
+        gain.gain.value = volumeToGain(setup.volume)
+        gain.connect(master)
+        this.channels.set(setup.id, { setup, gain, engine: createEngine(context, gain, setup.instrument) })
+        enginesChanged = true
+        continue
+      }
+      if (setup.volume !== channel.setup.volume) {
+        // Volume is on the channel, so it changes notes already sounding too.
+        channel.gain.gain.setTargetAtTime(volumeToGain(setup.volume), context.currentTime, VOLUME_SMOOTHING / 3)
+      }
+      // Instruments are replaced, never changed in place, so a new object means new settings.
+      if (setup.instrument !== channel.setup.instrument) {
+        if (sameEngine(setup.instrument, channel.setup.instrument)) {
+          channel.engine.update(setup.instrument)
+        } else {
+          // A different kind of instrument (or another plugin): swap in a new engine.
+          channel.engine.dispose()
+          channel.engine = createEngine(context, channel.gain, setup.instrument)
+          enginesChanged = true
+        }
+      }
+      channel.setup = setup
+    }
+
+    if (enginesChanged) for (const listener of this.channelListeners) listener()
+  }
+
+  getPlugin(channelId: string) {
+    return this.channels.get(channelId)?.engine.plugin
+  }
+
+  onChannelsChange(listener: () => void) {
+    this.channelListeners.add(listener)
+    return () => this.channelListeners.delete(listener)
+  }
+
+  playNote({ channelId, ...note }: ScheduledNote) {
+    this.channels.get(channelId)?.engine.play(note)
   }
 
   stopAll() {
     if (!this.context) return
     const now = this.context.currentTime
-    for (const voice of this.voices) voice.stop(now)
+    for (const channel of this.channels.values()) channel.engine.stopAll(now)
   }
 
   setMasterGain(gain: number) {
     this.masterGain = gain
     if (this.master) this.master.gain.value = gain
+  }
+
+  private removeChannel(id: string, channel: Channel) {
+    channel.engine.dispose()
+    // Disconnect after the stop fade, so a ringing note doesn't click off.
+    const { gain } = channel
+    setTimeout(() => gain.disconnect(), 50)
+    this.channels.delete(id)
   }
 }
