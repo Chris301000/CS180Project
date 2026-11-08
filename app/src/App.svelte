@@ -1,5 +1,6 @@
 <script lang="ts">
   import PianoRoll from './lib/pianoroll/PianoRoll.svelte'
+  import Window from './lib/ui/Window.svelte'
   import type { AudioBackend } from './lib/audio/backend'
   import { AudioPlayer } from './lib/audio/player'
   import { createDemoSong, formatPosition, type Song } from './lib/song/song'
@@ -94,6 +95,11 @@
 
   const viewport: Viewport = $derived({ pxPerTick: zoom, rowHeight: 16 })
 
+  // The piano roll window. Its position and size live here rather than in the
+  // window, so they survive closing and reopening it.
+  let pianoRollOpen = $state(true)
+  const pianoRollRect = $state({ x: 16, y: 16, width: 960, height: 540 })
+
   $effect(() => transport.subscribe(() => (playing = transport.isPlaying)))
   $effect(() => {
     transport.loop = loop
@@ -139,6 +145,9 @@
     } else if (mod && e.key.toLowerCase() === 'o') {
       e.preventDefault()
       fileInput.click()
+    } else if (e.key === 'F7') {
+      e.preventDefault()
+      pianoRollOpen = !pianoRollOpen
     }
   }
 </script>
@@ -157,6 +166,15 @@
       hidden
       data-testid="song-file-input"
     />
+
+    <button
+      class="file"
+      onclick={() => (pianoRollOpen = !pianoRollOpen)}
+      aria-pressed={pianoRollOpen}
+      title="Show or hide the piano roll (F7)"
+    >
+      Piano roll
+    </button>
 
     <button class="play" onclick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>
       {playing ? '❚❚' : '▶'}
@@ -194,8 +212,22 @@
     {/if}
   </header>
 
-  <main class="roll">
-    <PianoRoll {song} {transport} {viewport} {snap} {follow} onEdit={edit} />
+  <!-- The workspace: the area under the toolbar where windows float. -->
+  <main class="workspace">
+    {#if pianoRollOpen}
+      <Window
+        title="Piano roll"
+        bind:x={pianoRollRect.x}
+        bind:y={pianoRollRect.y}
+        bind:width={pianoRollRect.width}
+        bind:height={pianoRollRect.height}
+        minWidth={320}
+        minHeight={180}
+        onClose={() => (pianoRollOpen = false)}
+      >
+        <PianoRoll {song} {transport} {viewport} {snap} {follow} onEdit={edit} />
+      </Window>
+    {/if}
   </main>
 </div>
 
@@ -287,8 +319,16 @@
     color: var(--text-dim);
   }
 
-  .roll {
+  .file[aria-pressed='true'] {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* position: relative makes this the box windows are positioned in. */
+  .workspace {
+    position: relative;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
   }
 </style>
