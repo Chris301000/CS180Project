@@ -41,7 +41,7 @@ import {
   INSTRUMENTS,
   type ChoiceParam,
   type Instrument,
-  type InstrumentType,
+  type BuiltinType,
   type NumberParam,
 } from '../instruments/definitions'
 
@@ -190,10 +190,21 @@ function parseTracksAndPatterns(raw: Record<string, unknown>, timing: SongTiming
 function parseInstrument(raw: unknown, label: string): Instrument {
   if (!isObject(raw)) throw new SongFileError(`${label} are invalid.`)
   const type = raw.type ?? 'basic'
+  if (type === 'wam') {
+    // A plugin's settings are its own; keep them exactly as saved. Whether the
+    // plugin is allowed to load is decided when it's played, not here, so a
+    // song with an unapproved plugin still opens and keeps it.
+    return {
+      type: 'wam',
+      url: text(raw.url, 'plugin address'),
+      name: text(raw.name, 'plugin name'),
+      state: raw.state === undefined ? null : raw.state,
+    }
+  }
   if (typeof type !== 'string' || !Object.hasOwn(INSTRUMENTS, type)) {
     throw new SongFileError(`Unknown instrument "${String(type)}".`)
   }
-  const params = INSTRUMENTS[type as InstrumentType].params as Record<string, NumberParam | ChoiceParam>
+  const params = INSTRUMENTS[type as BuiltinType].params as Record<string, NumberParam | ChoiceParam>
   const instrument: Record<string, unknown> = { type }
   for (const [key, spec] of Object.entries(params)) {
     const value = raw[key]

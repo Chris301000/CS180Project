@@ -53,6 +53,18 @@ describe('song files', () => {
     expect(parseSong(file(minimal)).patterns[0].volume).toBe(1)
   })
 
+  it('round-trips a plugin with its own saved settings', () => {
+    const song = createDemoSong()
+    const plugin = { type: 'wam', url: 'https://example.com/synth.js', name: 'Synth', state: { cutoff: 0.25, mode: 'saw' } } as const
+    const withPlugin = { ...song, patterns: [{ ...song.patterns[0], instrument: plugin }, song.patterns[1]] }
+    expect(parseSong(serializeSong(withPlugin)).patterns[0].instrument).toEqual(plugin)
+  })
+
+  it('reads a plugin saved without settings as using its defaults', () => {
+    const song = parseSong(withPattern({ instrument: { type: 'wam', url: 'https://example.com/synth.js', name: 'Synth' } }))
+    expect(song.patterns[0].instrument).toMatchObject({ type: 'wam', state: null })
+  })
+
   it('round-trips every instrument type', () => {
     const song = createDemoSong()
     const fm = { ...createInstrument('fm'), ratio: 3.5, depth: 7 }
@@ -114,6 +126,7 @@ describe('song files', () => {
     ['a volume above full', withPattern({ volume: 1.5 })],
     ['a text volume', withPattern({ volume: 'loud' })],
     ['a missing setting', withPattern({ instrument: { type: 'fm', ratio: 2 } })],
+    ['a plugin with no address', withPattern({ instrument: { type: 'wam', name: 'Synth' } })],
     ['an out-of-range pitch', withPattern({ notes: [{ pitch: 200, start: 0, duration: 1 }] })],
     ['missing clips', file({ ...minimal, clips: undefined })],
     ['a clip of a pattern that is not there', file({ ...minimal, clips: [{ ...minimal.clips[0], pattern: 1 }] })],

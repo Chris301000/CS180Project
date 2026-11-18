@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WAM spike</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #1e2327;
+        color: #d5dbe0;
+        font: 13px/1.4 system-ui, sans-serif;
+      }
+      button {
+        margin-right: 8px;
+        padding: 4px 10px;
+      }
+      #gui {
+        margin: 12px 0;
+        min-height: 40px;
+        border: 1px dashed #555;
+      }
+      pre {
+        max-height: 360px;
+        overflow: auto;
+        background: #14181a;
+        padding: 8px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>WAM spike</h1>
+    <p>Throwaway test page for the WAM branch. Not part of the app.</p>
+    <p>
+      <button id="start">1. Start and load plugin</button>
+      <button id="note" disabled>2. Play a note</button>
+      <button id="state" disabled>3. Read state</button>
+    </p>
+    <div id="gui"></div>
+    <pre id="log"></pre>
+    <script type="module" src="./wam-spike.ts"></script>
+  </body>
+</html>

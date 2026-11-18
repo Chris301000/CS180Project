@@ -2,7 +2,10 @@ import { fireEvent, render } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import InstrumentPanel from './InstrumentPanel.svelte'
 import Knob from '../ui/Knob.svelte'
-import { createInstrument, type Instrument } from './definitions'
+import { createInstrument, createWamInstrument, WAM_PLUGINS, type Instrument } from './definitions'
+
+/** An audio engine with no plugins, for editors that don't need one. */
+const noPlugins = { start: async () => {}, getPlugin: () => undefined, onChannelsChange: () => () => {} }
 
 const pointer = (el: Element, type: string, y: number, options: MouseEventInit = {}) =>
   el.dispatchEvent(new MouseEvent(type, { bubbles: true, button: 0, clientY: y, ...options }))
@@ -67,7 +70,16 @@ describe('InstrumentPanel', () => {
     const onChange = vi.fn<(next: Instrument) => void>()
     const onVolumeInput = vi.fn<(volume: number) => void>()
     const onVolumeChange = vi.fn<(volume: number) => void>()
-    const result = render(InstrumentPanel, { instrument, volume: 0.8, onInput, onChange, onVolumeInput, onVolumeChange })
+    const result = render(InstrumentPanel, {
+      instrument,
+      channelId: 'p1',
+      audio: noPlugins,
+      volume: 0.8,
+      onInput,
+      onChange,
+      onVolumeInput,
+      onVolumeChange,
+    })
     const volume = () => result.container.querySelector<HTMLInputElement>('.volume input')!
     return { ...result, onInput, onChange, onVolumeInput, onVolumeChange, volume }
   }
@@ -89,6 +101,19 @@ describe('InstrumentPanel', () => {
     const { getByRole, onChange } = setup()
     await fireEvent.change(getByRole('combobox'), { target: { value: 'fm' } })
     expect(onChange).toHaveBeenCalledWith(createInstrument('fm'))
+  })
+
+  it('swaps in an approved plugin at its own defaults', async () => {
+    const { getByRole, onChange } = setup()
+    await fireEvent.change(getByRole('combobox'), { target: { value: `wam:${WAM_PLUGINS[0].url}` } })
+    expect(onChange).toHaveBeenCalledWith(createWamInstrument(WAM_PLUGINS[0]))
+  })
+
+  it("shows a song's unapproved plugin in the picker without offering it", () => {
+    const { getByText, getByRole } = setup({ type: 'wam', url: 'https://example.com/evil.js', name: 'Mystery', state: null })
+    const option = getByText('Mystery (not approved)') as HTMLOptionElement
+    expect(option.disabled).toBe(true)
+    expect(getByRole('combobox')).toHaveProperty('value', 'wam:https://example.com/evil.js')
   })
 
   it("shows the FM synth's own controls", () => {

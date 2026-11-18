@@ -1,4 +1,4 @@
-import type { AudioBackend, ScheduledNote } from './backend'
+import type { AudioBackend, ChannelSetup, ScheduledNote } from './backend'
 
 /** An AudioBackend that makes no sound and records what it was asked to do, for tests. */
 export class RecordingBackend implements AudioBackend {
@@ -7,6 +7,9 @@ export class RecordingBackend implements AudioBackend {
   starts = 0
   stops = 0
   notes: ScheduledNote[] = []
+  /** The channels from the latest setChannels, and how many times it was called. */
+  channels: ChannelSetup[] = []
+  channelSyncs = 0
 
   now() {
     return this.time
@@ -16,12 +19,25 @@ export class RecordingBackend implements AudioBackend {
     this.starts++
   }
 
+  setChannels(channels: ChannelSetup[]) {
+    this.channels = channels
+    this.channelSyncs++
+  }
+
   playNote(note: ScheduledNote) {
     this.notes.push(note)
   }
 
   stopAll() {
     this.stops++
+  }
+
+  getPlugin() {
+    return undefined
+  }
+
+  onChannelsChange() {
+    return () => {}
   }
 
   setMasterGain(gain: number) {
