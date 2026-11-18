@@ -7,5 +7,6 @@ export default defineConfig({
   plugins: [svelte(), svelteTesting()],
   test: {
     environment: 'jsdom',
+exclude: ['**/node_modules/**', 'e2e/**'],
   },
 })
