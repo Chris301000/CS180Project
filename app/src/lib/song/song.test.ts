@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { clampPitch, isBlackKey, pitchName, pitchToY, snapTick, tickToX, xToTick, yToPitch } from './coords'
-import { createDemoSong, formatPosition, secondsToTicks, songLengthTicks, ticksToSeconds } from './song'
+import {
+  createDemoSong,
+  formatPosition,
+  patternPosition,
+  playLengthTicks,
+  secondsToTicks,
+  songFromNotes,
+  songLengthTicks,
+  ticksToSeconds,
+  type Song,
+} from './song'
+import { addClip, removeClips } from './clips'
+import { createClip } from './song'
 import { Transport } from './transport'
 
 const vp = { pxPerTick: 0.5, rowHeight: 10 }
@@ -52,11 +64,63 @@ describe('song', () => {
     expect(formatPosition(song.ppq * 5 + 7, song)).toBe('2:2:07')
   })
 
-  it('keeps demo notes inside the song', () => {
-    for (const note of song.notes) {
-      expect(note.start + note.duration).toBeLessThanOrEqual(songLengthTicks(song))
+  it('keeps demo notes inside their patterns and clips inside the song', () => {
+    for (const pattern of song.patterns) {
+      for (const note of pattern.notes) expect(note.start + note.duration).toBeLessThanOrEqual(pattern.length)
     }
-    expect(new Set(song.notes.map((n) => n.id)).size).toBe(song.notes.length)
+    for (const clip of song.clips) expect(clip.start + clip.length).toBeLessThanOrEqual(songLengthTicks(song))
+  })
+
+  it('gives every demo note, track, pattern and clip its own id', () => {
+    const ids = [
+      ...song.patterns.flatMap((p) => [p.id, ...p.notes.map((n) => n.id)]),
+      ...song.tracks.map((t) => t.id),
+      ...song.clips.map((c) => c.id),
+    ]
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('makes a one-track song covering the whole song from notes', () => {
+    const one = songFromNotes({ bpm: 120, ppq: 96, beatsPerBar: 4, bars: 2 }, [])
+    expect(one.tracks).toHaveLength(1)
+    expect(one.patterns[0].length).toBe(768)
+    expect(one.clips[0]).toMatchObject({ start: 0, offset: 0, length: 768 })
+  })
+})
+
+describe('playLengthTicks', () => {
+  const timing = { bpm: 120, ppq: 96, beatsPerBar: 4, bars: 16 }
+
+  it('ends at the last clip, rounded up to a whole bar', () => {
+    const song = songFromNotes(timing, [])
+    const clip = song.clips[0]
+    expect(playLengthTicks({ ...song, clips: [{ ...clip, start: 384, length: 400 }] })).toBe(384 * 3)
+    expect(playLengthTicks({ ...song, clips: [{ ...clip, start: 0, length: 384 * 2 }] })).toBe(384 * 2)
+  })
+
+  it('is one bar for a song with no clips', () => {
+    expect(playLengthTicks({ ...songFromNotes(timing, []), clips: [] })).toBe(384)
+  })
+})
+
+describe('patternPosition', () => {
+  // One pattern, placed twice: untrimmed at bar 1, and at bar 3 with its first 100 ticks trimmed off.
+  const base = songFromNotes({ bpm: 120, ppq: 96, beatsPerBar: 4, bars: 4 }, [])
+  const pattern = { ...base.patterns[0], length: 384 }
+  const first = { ...base.clips[0], length: 384 }
+  const second = { ...first, id: 'second', start: 768, offset: 100, length: 284 }
+  const song: Song = { ...base, patterns: [pattern], clips: [first, second] }
+
+  it('maps a song position inside a clip to the pattern', () => {
+    expect(patternPosition(song, pattern.id, 50)).toBe(50)
+    expect(patternPosition(song, pattern.id, 768)).toBe(100)
+    expect(patternPosition(song, pattern.id, 800)).toBe(132)
+  })
+
+  it('is null outside every clip of the pattern', () => {
+    expect(patternPosition(song, pattern.id, 500)).toBeNull()
+    expect(patternPosition(song, pattern.id, 768 + 284)).toBeNull()
+    expect(patternPosition(song, 'other', 50)).toBeNull()
   })
 })
 
@@ -98,9 +162,10 @@ describe('Transport', () => {
     expect(transport.position()).toBe(song.ppq * 3)
   })
 
-  it('loops at the end of the song', () => {
+  it('loops at the end of the last clip, not the end of the timeline', () => {
     const { song, transport, advance } = setup()
-    const songSeconds = ticksToSeconds(songLengthTicks(song), song)
+    expect(playLengthTicks(song)).toBeLessThan(songLengthTicks(song))
+    const songSeconds = ticksToSeconds(playLengthTicks(song), song)
     transport.play()
     advance(songSeconds + 0.5)
     expect(transport.position()).toBeCloseTo(song.ppq)
@@ -110,7 +175,7 @@ describe('Transport', () => {
     const { song, transport, advance } = setup()
     transport.loop = false
     transport.play()
-    advance(ticksToSeconds(songLengthTicks(song), song) + 1)
+    advance(ticksToSeconds(playLengthTicks(song), song) + 1)
     expect(transport.position()).toBe(0)
     expect(transport.isPlaying).toBe(false)
   })
@@ -153,7 +218,7 @@ describe('Transport', () => {
 
   it('keeps position across several loops and a pause', () => {
     const { song, transport, advance } = setup()
-    const songSeconds = ticksToSeconds(songLengthTicks(song), song)
+    const songSeconds = ticksToSeconds(playLengthTicks(song), song)
     transport.play()
     advance(songSeconds * 3 + 0.5)
     transport.pause()
@@ -169,5 +234,57 @@ describe('Transport', () => {
     unsubscribe()
     transport.play()
     expect(calls).toBe(2)
+  })
+})
+
+describe('Transport when the play length changes while playing', () => {
+  // The demo song's clips end at bar 4, so it loops every 4 bars: 1536 ticks, 8 seconds.
+  const BAR = 384
+  function setup() {
+    const state = { song: createDemoSong() }
+    let now = 0
+    const transport = new Transport(() => state.song, () => now)
+    let notified = 0
+    transport.subscribe(() => notified++)
+    const addFarClip = () => {
+      state.song = addClip(state.song, createClip(state.song.patterns[0], state.song.tracks[0], 8 * BAR))
+      return state.song.clips.at(-1)!
+    }
+    return { state, transport, addFarClip, advance: (s: number) => (now += s), notified: () => notified }
+  }
+
+  it('keeps its place when a clip is added further ahead after looping', () => {
+    const { transport, addFarClip, advance } = setup()
+    transport.play()
+    advance(9) // Looped once: 1s into the second time round.
+    expect(transport.position()).toBeCloseTo(192)
+    addFarClip() // The song now plays to bar 12.
+    expect(transport.position()).toBeCloseTo(192)
+    advance(1)
+    expect(transport.position()).toBeCloseTo(384)
+  })
+
+  it('plays on past the old loop point once the song is longer', () => {
+    const { transport, addFarClip, advance } = setup()
+    transport.play()
+    advance(7)
+    addFarClip()
+    advance(2)
+    expect(transport.position()).toBeCloseTo(4 * BAR + 192)
+  })
+
+  it('starts the loop again when the song gets shorter under the playhead', () => {
+    const { state, transport, addFarClip, advance, notified } = setup()
+    const far = addFarClip()
+    transport.play()
+    advance(20) // Bar 11, inside the far clip.
+    expect(transport.position()).toBeCloseTo(10 * BAR)
+    const before = notified()
+    state.song = removeClips(state.song, [far.id]) // Back to looping at bar 4.
+    expect(transport.position()).toBe(0)
+    expect(notified()).toBe(before + 1)
+    expect(transport.isPlaying).toBe(true)
+    advance(0.5)
+    expect(transport.position()).toBeCloseTo(96)
   })
 })

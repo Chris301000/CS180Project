@@ -1,5 +1,13 @@
 import type { AudioBackend } from './backend'
-import { secondsToTicks, songLengthTicks, ticksToSeconds, type Note, type Song } from '../song/song'
+import {
+  findPattern,
+  findTrack,
+  secondsToTicks,
+  playLengthTicks,
+  ticksToSeconds,
+  type Song,
+} from '../song/song'
+import type { Instrument } from '../instruments/definitions'
 import type { Transport } from '../song/transport'
 
 /** How far ahead notes are queued, in seconds. */
@@ -7,9 +15,49 @@ const LOOKAHEAD = 0.1
 /** How often the queue is topped up, in milliseconds. */
 const INTERVAL = 25
 
-/** Notes starting in [from, to). */
-export const notesStartingIn = (song: Song, from: number, to: number): Note[] =>
-  song.notes.filter((n) => n.start >= from && n.start < to)
+/** A note as it plays in the song: in song time, cut to its clip, with its pattern's instrument. */
+export interface SongNote {
+  pitch: number
+  /** In ticks from the start of the song. */
+  start: number
+  duration: number
+  velocity: number
+  /** The pattern's volume slider, 0–1. */
+  volume: number
+  instrument: Instrument
+}
+
+/**
+ * Notes starting in [from, to), in song ticks, from every clip. A clip plays
+ * the part of its pattern from `offset` to `offset + length`: notes starting
+ * before the offset are trimmed away, and notes running past the clip's end
+ * are cut short there. Sorted by start time.
+ */
+export function notesStartingIn(song: Song, from: number, to: number): SongNote[] {
+  const result: SongNote[] = []
+  for (const clip of song.clips) {
+    // Skip clips that don't overlap the range at all.
+    if (clip.start >= to || clip.start + clip.length <= from) continue
+    const pattern = findPattern(song, clip.patternId)
+    if (!pattern || !findTrack(song, clip.trackId)) continue
+    const clipEnd = clip.offset + clip.length // in pattern ticks
+    for (const note of pattern.notes) {
+      if (note.start < clip.offset || note.start >= clipEnd) continue
+      const start = clip.start + note.start - clip.offset
+      if (start < from || start >= to) continue
+      result.push({
+        pitch: note.pitch,
+        start,
+        duration: Math.min(note.duration, clipEnd - note.start),
+        velocity: note.velocity,
+        volume: pattern.volume,
+        instrument: pattern.instrument,
+      })
+    }
+  }
+  // Stable, so notes on the same tick keep their pattern order.
+  return result.sort((a, b) => a.start - b.start)
+}
 
 /**
  * Feeds notes to the backend slightly ahead of time, following the transport.
@@ -37,7 +85,7 @@ export class AudioPlayer {
     if (!this.transport.isPlaying) return
 
     const song = this.getSong()
-    const end = songLengthTicks(song)
+    const end = playLengthTicks(song)
     const now = this.backend.now()
     if (end <= 0) return
 
@@ -60,7 +108,8 @@ export class AudioPlayer {
           time: this.cursorTime + ticksToSeconds(note.start - this.cursorTick, song),
           duration: ticksToSeconds(note.duration, song),
           velocity: note.velocity,
-          synth: song.synth,
+          volume: note.volume,
+          instrument: note.instrument,
         })
       }
       this.cursorTime += ticksToSeconds(stop - this.cursorTick, song)

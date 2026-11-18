@@ -20,7 +20,7 @@ flowchart LR
   Instruments["Instrument panel"] -- "add synth, change settings" --> History
   Tempo["Tempo control"] -- "tempo change" --> History
   Importer["Importer"] -- "validated song" --> History
-  History -- "current song" --> Song["SongData<br/>notes, tracks, tempo, synth settings"]
+  History -- "current song" --> Song["SongData<br/>tracks, patterns, clips, tempo"]
   Song -- "redraw" --> Roll
   View["Zoom / Snap"] --> ViewState["View state<br/>zoom, snap, selection"]
   ViewState -- "layout" --> Roll
@@ -92,8 +92,8 @@ flowchart LR
 - **WAV export should be another `AudioBackend`,** so it reuses the scheduling
   and note model instead of a separate path.
 - **Imported songs are validated first,** and their note IDs must not collide
-  with IDs created afterwards. Song files don't store note IDs at all; notes
-  get fresh ones when a file is opened.
+  with IDs created afterwards. Song files store no IDs at all (clips point to patterns and tracks by position); everything
+  gets fresh IDs when a file is opened.
 - **Song files carry a `format` and `version`.** Bump `SONG_FILE_VERSION` when
   the saved shape changes, and keep `parseSong` able to read older versions.
 
@@ -103,7 +103,7 @@ flowchart LR
 | --- | --- |
 | `PianoRoll` | `app/src/lib/pianoroll/PianoRoll.svelte` |
 | `History` | `app/src/lib/song/history.ts` |
-| `SongData` | `app/src/lib/song/song.ts`, changed through `edits.ts` |
+| `SongData` | `app/src/lib/song/song.ts`, changed through `edits.ts` (notes) and `clips.ts` (clips) |
 | `Transport` | `app/src/lib/song/transport.ts` |
 | `AudioBackend` | `app/src/lib/audio/backend.ts` |
 | Web Audio implementation | `app/src/lib/audio/webAudioBackend.ts` |
