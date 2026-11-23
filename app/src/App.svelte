@@ -23,14 +23,20 @@
   import { History } from './lib/song/history'
   import type { Viewport } from './lib/song/coords'
   import { parseSong, serializeSong, SongFileError, SONG_FILE_EXTENSION } from './lib/song/songFile'
+  import type { SongStore } from './lib/cloud/songStore'
+  import MySongs from './lib/cloud/MySongs.svelte'
 
   let {
     backend,
     account,
   }: {
     backend: AudioBackend
-    /** The signed-in user, shown at the right of the toolbar. Omitted in tests. */
-    account?: { username: string; onLogOut: () => void }
+    /**
+     * The signed-in user: their name and Log out go at the right of the toolbar,
+     * and Save / My songs use `songs` (their account) instead of files.
+     * Omitted in most tests, where the app works with files only.
+     */
+    account?: { username: string; onLogOut: () => void; songs: SongStore }
   } = $props()
 
   const SNAP_OPTIONS = [
@@ -95,6 +101,10 @@
       transport.stop()
       edit(loaded)
       fileError = ''
+      // An imported file isn't in the account yet; Save will add it as a new song.
+      cloudId = null
+      savedSong = null
+      songName = file.name.replace(/(\.litedaw)?\.json$/i, '') || 'Untitled'
     } catch (err) {
       fileError = err instanceof SongFileError ? err.message : 'Could not read that file.'
     }
@@ -106,6 +116,53 @@
     // Clear it so choosing the same file again still fires a change.
     input.value = ''
     if (file) openSong(file)
+  }
+
+  // Songs in the signed-in user's account. `cloudId` is the row the editor's song
+  // was opened from or last saved to; saving again overwrites that row.
+  let cloudId = $state<string | null>(null)
+  let songName = $state('Untitled')
+  // The song as last saved or opened. Edits replace `song` with a new object,
+  // so comparing the two tells whether there are unsaved changes.
+  let savedSong = $state.raw<Song | null>(null)
+  let saving = $state(false)
+  let mySongsOpen = $state(false)
+  const saveStatus = $derived(
+    saving ? 'Saving…' : !cloudId ? 'Not saved yet' : song !== savedSong ? 'Unsaved changes' : 'Saved',
+  )
+
+  async function saveToAccount() {
+    if (!account || saving) return
+    const snapshot = song
+    saving = true
+    try {
+      const saved = await account.songs.save(snapshot, songName.trim() || 'Untitled', cloudId ?? undefined)
+      cloudId = saved.id
+      songName = saved.name
+      savedSong = snapshot
+      fileError = ''
+    } catch (err) {
+      fileError = `Couldn't save: ${err instanceof Error ? err.message : 'unknown error'}`
+    } finally {
+      saving = false
+    }
+  }
+
+  async function openFromAccount(id: string) {
+    if (!account) return
+    try {
+      const { summary, song: loaded } = await account.songs.load(id)
+      transport.stop()
+      edit(loaded)
+      cloudId = summary.id
+      songName = summary.name
+      savedSong = song
+      mySongsOpen = false
+      fileError = ''
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'unknown error'
+      fileError = err instanceof SongFileError ? reason : `Couldn't open that song: ${reason}`
+    }
   }
 
   let playing = $state(transport.isPlaying)
@@ -246,10 +303,12 @@
       redo()
     } else if (mod && e.key.toLowerCase() === 's') {
       e.preventDefault()
-      saveSong()
+      if (account) saveToAccount()
+      else saveSong()
     } else if (mod && e.key.toLowerCase() === 'o') {
       e.preventDefault()
-      fileInput.click()
+      if (account) mySongsOpen = true
+      else fileInput.click()
     } else if (e.key === 'F5') {
       // F5 and F7 are FL's keys for these windows. F5 would otherwise reload the page.
       e.preventDefault()
@@ -268,8 +327,26 @@
 
 <div class="app">
   <header class="toolbar">
-    <button class="file" onclick={() => fileInput.click()} title="Open a song file (Ctrl/Cmd+O)">Open</button>
-    <button class="file" onclick={saveSong} title="Save the song to a file (Ctrl/Cmd+S)">Save</button>
+    {#if account}
+      <button class="file" onclick={() => (mySongsOpen = true)} title="Open one of your saved songs (Ctrl/Cmd+O)">
+        My songs
+      </button>
+      <input
+        class="song-name"
+        bind:value={songName}
+        aria-label="Song name"
+        maxlength="100"
+        onkeydown={(e) => e.key === 'Enter' && saveToAccount()}
+      />
+      <button class="file" onclick={saveToAccount} disabled={saving} title="Save to your account (Ctrl/Cmd+S)">
+        Save
+      </button>
+      <span class="save-status" class:unsaved={saveStatus !== 'Saved'}>{saveStatus}</span>
+      <button class="file" onclick={saveSong} title="Download the song as a file">Export</button>
+    {:else}
+      <button class="file" onclick={() => fileInput.click()} title="Open a song file (Ctrl/Cmd+O)">Open</button>
+      <button class="file" onclick={saveSong} title="Save the song to a file (Ctrl/Cmd+S)">Save</button>
+    {/if}
     <input
       bind:this={fileInput}
       type="file"
@@ -456,6 +533,18 @@
       </Window>
     {/if}
   </main>
+  {#if account && mySongsOpen}
+    <MySongs
+      store={account.songs}
+      currentId={cloudId}
+      onOpen={openFromAccount}
+      onImport={() => {
+        mySongsOpen = false
+        fileInput.click()
+      }}
+      onClose={() => (mySongsOpen = false)}
+    />
+  {/if}
 </div>
 
 <style>
@@ -517,6 +606,25 @@
     align-items: center;
     gap: 6px;
     color: #ff7a7a;
+  }
+
+  .song-name {
+    width: 140px;
+    padding: 4px 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    background: var(--roll-bg);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .save-status {
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+
+  .save-status.unsaved {
+    color: var(--note-selected);
   }
 
   .account {

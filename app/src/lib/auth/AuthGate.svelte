@@ -4,9 +4,12 @@
   import App from '../../App.svelte'
   import type { AudioBackend } from '../audio/backend'
   import LoginScreen from './LoginScreen.svelte'
+  import { supabaseSongStore } from '../cloud/songStore'
   import { getCurrentUserProfile, logOut, supabase } from './supabase'
 
   let { backend }: { backend: AudioBackend } = $props()
+
+  const songs = supabaseSongStore(supabase)
 
   // undefined = still checking for a saved session; null = signed out.
   let session = $state<Session | null | undefined>(undefined)
@@ -34,7 +37,7 @@
 {#if session === undefined}
   <!-- Checking for a saved login; render nothing to avoid a login-screen flash. -->
 {:else if session}
-  <App {backend} account={{ username, onLogOut: logOut }} />
+  <App {backend} account={{ username, onLogOut: logOut, songs }} />
 {:else}
   <LoginScreen />
 {/if}
