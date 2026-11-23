@@ -1,9 +1,9 @@
 import { mount } from 'svelte'
 import './app.css'
-import App from './App.svelte'
+import AuthGate from './lib/auth/AuthGate.svelte'
 import { WebAudioBackend } from './lib/audio/webAudioBackend'
 
-const app = mount(App, {
+const app = mount(AuthGate, {
   target: document.getElementById('app')!,
   props: { backend: new WebAudioBackend() },
 })
