@@ -24,7 +24,14 @@
   import type { Viewport } from './lib/song/coords'
   import { parseSong, serializeSong, SongFileError, SONG_FILE_EXTENSION } from './lib/song/songFile'
 
-  let { backend }: { backend: AudioBackend } = $props()
+  let {
+    backend,
+    account,
+  }: {
+    backend: AudioBackend
+    /** The signed-in user, shown at the right of the toolbar. Omitted in tests. */
+    account?: { username: string; onLogOut: () => void }
+  } = $props()
 
   const SNAP_OPTIONS = [
     { label: 'Beat', beats: 1 },
@@ -331,6 +338,12 @@
         <button class="dismiss" onclick={() => (fileError = '')} aria-label="Dismiss">✕</button>
       </span>
     {/if}
+    {#if account}
+      <span class="account">
+        <span class="username" title="Signed in">{account.username}</span>
+        <button class="file" onclick={account.onLogOut}>Log out</button>
+      </span>
+    {/if}
   </header>
 
   <!-- A reusable piece of markup, like a small template. Both windows use it for their zoom slider. -->
@@ -504,6 +517,17 @@
     align-items: center;
     gap: 6px;
     color: #ff7a7a;
+  }
+
+  .account {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  .username {
+    color: var(--text-dim);
   }
 
   .dismiss {
