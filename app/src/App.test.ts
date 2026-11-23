@@ -193,6 +193,18 @@ describe('instrument window', () => {
   })
 })
 
+describe('new song', () => {
+  it('replaces the song with an empty one, and undo brings the old one back', async () => {
+    const { notes, getByText, getByLabelText } = setup()
+    const start = notes()
+    await fireEvent.click(getByText('New'))
+    expect(notes()).toBe(0)
+    ;(getByLabelText('Undo') as HTMLButtonElement).click()
+    await tick()
+    expect(notes()).toBe(start)
+  })
+})
+
 describe('opening song files', () => {
   it('replaces the song, and undo brings the old one back', async () => {
     const { notes, openFile, getByLabelText } = setup()

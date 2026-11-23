@@ -179,6 +179,11 @@ export function patternPosition(song: Song, patternId: string, tick: number): nu
 }
 
 /** A placeholder song so there is something to look at: a 4-bar loop of chords and a melody on two tracks, in a 16-bar timeline. */
+/** A blank song: one track and one empty pattern, at the usual tempo and length. */
+export function createEmptySong(): Song {
+  return songFromNotes({ bpm: 120, ppq: DEFAULT_PPQ, beatsPerBar: 4, bars: 16 }, [])
+}
+
 export function createDemoSong(): Song {
   const ppq = DEFAULT_PPQ
   const beat = ppq

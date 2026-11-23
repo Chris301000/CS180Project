@@ -31,6 +31,13 @@ export class History<T> {
     this.future = []
   }
 
+  /** Starts over from `present`, forgetting everything that could be undone or redone. */
+  reset(present: T) {
+    this.present = present
+    this.past = []
+    this.future = []
+  }
+
   undo(): T {
     const previous = this.past.pop()
     if (previous !== undefined) {

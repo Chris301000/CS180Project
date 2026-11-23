@@ -8,6 +8,7 @@
   import type { Instrument } from './lib/instruments/definitions'
   import {
     createDemoSong,
+    createEmptySong,
     createPattern,
     createTrack,
     findPattern,
@@ -97,14 +98,9 @@
   async function openSong(file: File) {
     try {
       const loaded = parseSong(await file.text())
-      // The old position may be past the end of the new song.
-      transport.stop()
-      edit(loaded)
-      fileError = ''
       // An imported file isn't in the account yet; Save will add it as a new song.
-      cloudId = null
-      savedSong = null
-      songName = file.name.replace(/(\.litedaw)?\.json$/i, '') || 'Untitled'
+      switchSong(loaded, null, file.name.replace(/(\.litedaw)?\.json$/i, '') || 'Untitled')
+      fileError = ''
     } catch (err) {
       fileError = err instanceof SongFileError ? err.message : 'Could not read that file.'
     }
@@ -122,24 +118,73 @@
   // was opened from or last saved to; saving again overwrites that row.
   let cloudId = $state<string | null>(null)
   let songName = $state('Untitled')
-  // The song as last saved or opened. Edits replace `song` with a new object,
-  // so comparing the two tells whether there are unsaved changes.
-  let savedSong = $state.raw<Song | null>(null)
+  // The song as last saved, opened or created. Edits replace `song` with a new
+  // object, so comparing the two tells whether there are unsaved changes.
+  let cleanSong = $state.raw<Song>(history.current)
   let saving = $state(false)
   let mySongsOpen = $state(false)
+  const hasChanges = $derived(song !== cleanSong)
   const saveStatus = $derived(
-    saving ? 'Saving…' : !cloudId ? 'Not saved yet' : song !== savedSong ? 'Unsaved changes' : 'Saved',
+    saving ? 'Saving…' : !cloudId ? 'Not saved yet' : hasChanges ? 'Unsaved changes' : 'Saved',
   )
 
-  async function saveToAccount() {
+  /**
+   * Puts a different song in the editor: a new one, or one opened from the
+   * account or a file. `id` is its row in the account, or null if it isn't saved.
+   *
+   * Signed out, this is an ordinary edit that undo can take back. Signed in,
+   * the undo history starts over instead: otherwise undo could bring back the
+   * previous song while Save still points at this one, and overwrite it.
+   */
+  function switchSong(next: Song, id: string | null, name: string) {
+    // The old position may be past the end of the new song.
+    transport.stop()
+    if (account) {
+      history.reset(next)
+      syncHistory()
+    } else {
+      edit(next)
+    }
+    cloudId = id
+    songName = name
+    cleanSong = song
+  }
+
+  /** Asks before throwing away unsaved work. Signed out, undo can recover it instead. */
+  function okToDiscard(): boolean {
+    if (!account || !hasChanges) return true
+    const what = cloudId ? `changes to "${songName}"` : `"${songName}"`
+    return confirm(`You haven't saved ${what}. Discard them?`)
+  }
+
+  function newSong() {
+    if (!okToDiscard()) return
+    switchSong(createEmptySong(), null, 'Untitled')
+    fileError = ''
+  }
+
+  function importFile() {
+    if (!okToDiscard()) return
+    mySongsOpen = false
+    fileInput.click()
+  }
+
+  /** Saves to the account: over the current song, or as a separate new one with `asNew`. */
+  async function saveToAccount({ asNew = false } = {}) {
     if (!account || saving) return
+    let name = songName.trim() || 'Untitled'
+    if (asNew) {
+      const chosen = prompt('Name for the new copy:', `${name} copy`)?.trim()
+      if (!chosen) return
+      name = chosen
+    }
     const snapshot = song
     saving = true
     try {
-      const saved = await account.songs.save(snapshot, songName.trim() || 'Untitled', cloudId ?? undefined)
+      const saved = await account.songs.save(snapshot, name, asNew ? undefined : (cloudId ?? undefined))
       cloudId = saved.id
       songName = saved.name
-      savedSong = snapshot
+      cleanSong = snapshot
       fileError = ''
     } catch (err) {
       fileError = `Couldn't save: ${err instanceof Error ? err.message : 'unknown error'}`
@@ -149,14 +194,10 @@
   }
 
   async function openFromAccount(id: string) {
-    if (!account) return
+    if (!account || !okToDiscard()) return
     try {
       const { summary, song: loaded } = await account.songs.load(id)
-      transport.stop()
-      edit(loaded)
-      cloudId = summary.id
-      songName = summary.name
-      savedSong = song
+      switchSong(loaded, summary.id, summary.name)
       mySongsOpen = false
       fileError = ''
     } catch (err) {
@@ -309,6 +350,10 @@
       e.preventDefault()
       if (account) mySongsOpen = true
       else fileInput.click()
+    } else if (e.altKey && e.code === 'KeyN') {
+      // Ctrl/Cmd+N is the browser's new window and can't be taken over.
+      e.preventDefault()
+      newSong()
     } else if (e.key === 'F5') {
       // F5 and F7 are FL's keys for these windows. F5 would otherwise reload the page.
       e.preventDefault()
@@ -327,6 +372,7 @@
 
 <div class="app">
   <header class="toolbar">
+    <button class="file" onclick={newSong} title="Start a new, empty song (Alt+N)">New</button>
     {#if account}
       <button class="file" onclick={() => (mySongsOpen = true)} title="Open one of your saved songs (Ctrl/Cmd+O)">
         My songs
@@ -338,8 +384,16 @@
         maxlength="100"
         onkeydown={(e) => e.key === 'Enter' && saveToAccount()}
       />
-      <button class="file" onclick={saveToAccount} disabled={saving} title="Save to your account (Ctrl/Cmd+S)">
+      <button class="file" onclick={() => saveToAccount()} disabled={saving} title="Save to your account (Ctrl/Cmd+S)">
         Save
+      </button>
+      <button
+        class="file"
+        onclick={() => saveToAccount({ asNew: true })}
+        disabled={saving}
+        title="Save a separate copy to your account, leaving the original as it was"
+      >
+        Save as new
       </button>
       <span class="save-status" class:unsaved={saveStatus !== 'Saved'}>{saveStatus}</span>
       <button class="file" onclick={saveSong} title="Download the song as a file">Export</button>
@@ -538,10 +592,7 @@
       store={account.songs}
       currentId={cloudId}
       onOpen={openFromAccount}
-      onImport={() => {
-        mySongsOpen = false
-        fileInput.click()
-      }}
+      onImport={importFile}
       onClose={() => (mySongsOpen = false)}
     />
   {/if}
